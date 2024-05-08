@@ -1,0 +1,84 @@
+{
+  "user_id" : "1111",
+  "preferences": {
+    "artists": ["Adele", "Lauren Daigle", "John Legend"],
+    "genres": ["R&B", "soul", "pop"],
+    "properties": {
+      "adventurousness": 0.7
+    }
+  },
+  "background": {
+    "tracks": [
+      {
+        "title": "Someone Like You",
+        "artist": "Adele",
+        "genre": ["pop"],
+        "track_id": "001",
+        "rate": 5
+      },
+      {
+        "title": "You Say",
+        "artist": "Lauren Daigle",
+        "genre": ["pop"],
+        "track_id": "002",
+        "rate": 5
+      },
+      {
+        "title": "All of Me",
+        "artist": "John Legend",
+        "genre": ["R&B"],
+        "track_id": "003",
+        "rate": 4
+      },
+      {
+        "title": "read all about it",
+        "artist": "Emeli Sande",
+        "genre": ["soul"],
+        "track_id": "004",
+        "rate": 5
+      },
+      {
+        "title": "Trust in You",
+        "artist": "Lauren Daigle",
+        "genre": ["soul", "pop"],
+        "track_id": "005",
+        "rate": 4
+      },
+      {
+        "title": "Perfect",
+        "artist": "Ed Sheeran",
+        "genre": ["pop"],
+        "track_id": "006",
+        "rate": 4
+      },
+      {
+        "title": "Blinding Lights",
+        "artist": "The Weeknd",
+        "genre": ["pop"],
+        "track_id": "007",
+        "rate": 2
+      },
+      {
+        "title": "Watermelon Sugar",
+        "artist": "Harry Styles",
+        "genre": ["pop"],
+        "track_id": "008",
+        "rate": 2
+      },
+      {
+        "title": "Levitating",
+        "artist": "Dua Lipa",
+        "genre": ["pop"],
+        "track_id": "009",
+        "rate": 1
+      },
+      {
+        "title": "Set Fire to the Rain",
+        "artist": "Adele",
+        "genre": ["pop", "soul"],
+        "track_id": "010",
+        "rate": 3
+      }
+    ]
+  }
+}
