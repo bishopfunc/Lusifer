@@ -2,8 +2,10 @@ import openai
 from openai import OpenAI
 import pandas as pd
 import json
-from sklearn.metrics import mean_squared_error, precision_score, recall_score, accuracy_score
+from sklearn.metrics import root_mean_squared_error, precision_score, recall_score, accuracy_score
 from tqdm import tqdm
+import time
+import os
 
 # Set your OpenAI API key
 KEY = "sk-proj-AycHzZMxqZscz8ltuD5iT3BlbkFJvJPLk9TbP9cMwDCZJd2w"
@@ -99,8 +101,8 @@ Analysis:
 Based on the user information, user's last 10 movies, and user's characteristics from Analysis, rate the following 
 movies (scale 1-5) on behalf of the user: {movies_summary}
 
-Output should be a JSON file where the keys are movie_id and values are ratings(1-5), see below example 
-123: 4 (in this example, 123 is movie_id and 4 is the rating)
+Output should be a JSON file where the keys are movie_id and values are ratings(1-5), see below example: 
+{{123: 4}} (in this example, 123 is movie_id and 4 is the rating)
 
 
 """
@@ -148,6 +150,7 @@ def analyze_user(user_id, recent_movies_to_consider=60, chunk_size=20):
 
     return summary, tokens, last_N_movies
 
+
 # --------------------------------------------------------------
 
 def update_summary_prompt(previous_summary, user_info, new_chunk):
@@ -160,7 +163,6 @@ def update_summary_prompt(previous_summary, user_info, new_chunk):
     ratings_summary = '\n'.join(
         f"Movie: {row['movie_info']}\nRating: {row['rating']}" for _, row in new_chunk.iterrows()
     )
-
 
     prompt = f"""
 Consider below information about the user:
@@ -186,14 +188,13 @@ example of expected output:
 
 
 # --------------------------------------------------------------
-def rate_new_movies(user_id, analysis, last_N_movies):
+def rate_new_movies(user_id, analysis, last_N_movies, test_set):
     """
     Generate final output: simulated ratings
     """
     user_info = users_df[users_df['user_id'] == user_id]['user_info'].values[0]
-    test_movies = rating_test_df[rating_test_df['user_id'] == user_id].merge(movies_df, on='movie_id')
-
-    recent_movies = get_last_ratings(user_id, n=10)
+    test_movies = test_set.merge(movies_df, on='movie_id')
+    recent_movies = last_N_movies
 
     # Breaking test_movies into chunks of 10
     chunk_size = 10
@@ -213,6 +214,7 @@ def rate_new_movies(user_id, analysis, last_N_movies):
         total_tokens['completion_tokens'] += tokens['completion_tokens']
 
     return aggregated_ratings, total_tokens
+
 
 # --------------------------------------------------------------
 # Function to compare the ratings and calculate accuracy metrics
@@ -239,10 +241,9 @@ def compare_ratings_individual_user(user_id, llm_ratings):
     # print(comparison)
 
     # Calculate metrics
-    rmse = mean_squared_error(comparison['actual'], comparison['predicted'], squared=False)
+    rmse = root_mean_squared_error(comparison['actual'], comparison['predicted'])
     precision = precision_score(comparison['actual'], comparison['predicted'], average='micro')
     recall = recall_score(comparison['actual'], comparison['predicted'], average='micro')
-
 
     print("\nMetrics:")
     print(f"RMSE: {rmse:.4f}")
@@ -285,8 +286,7 @@ def get_llm_response(prompt, mode):
             'completion_tokens': response.usage.completion_tokens,
             'total_tokens': response.usage.total_tokens
         }
-        print(f"Tokens used: {tokens}")
-
+        # print(f"Tokens used: {tokens}")
 
         try:
             output = json.loads(response.choices[0].message.content)
@@ -313,33 +313,56 @@ def get_llm_response(prompt, mode):
         print(e.status_code)
         print(e.response)
 
+
 # --------------------------------------------------------------
 def load_data():
-    # Load the datasets
+    # Paths for the processed files
+    processed_users_file = "./Data/users_with_summary_df.pkl"
+    processed_ratings_file = "./Data/rating_test_df.pkl"
+
+    # loading users dataframe
+    if os.path.exists(processed_users_file):
+        # Load the processed files if they exist
+        users_df = pd.read_pickle(processed_users_file)
+    else:
+        users_df = pd.read_pickle("./Data/user_dataset.pkl")
+        users_df = users_df[["user_id", "user_info"]]
+
+    # loading ratings dataframe
+    if os.path.exists(processed_ratings_file):
+        rating_test_df = pd.read_pickle(processed_ratings_file)
+
+    else:
+        rating_test_df = pd.read_csv(f'{Path}/u1.test', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'],
+                                     encoding='latin-1')
+
+    # loading ratings: Train set
+    rating_df = pd.read_csv(f'{Path}/u1.base', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'],
+                            encoding='latin-1')
+
+    # Load movies
     movies_df = pd.read_pickle("./Data/movies_enriched_dataset.pkl")
     movies_df = movies_df[["movie_id", "movie_info"]]
-
-    users_df = pd.read_pickle("./Data/user_dataset.pkl")
-    users_df = users_df[["user_id", "user_info"]]
-
-    rating_df = pd.read_csv(f'{Path}/u1.base', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'], encoding='latin-1')
-    rating_test_df = pd.read_csv(f'{Path}/u1.test', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'], encoding='latin-1')
 
     # Add new column to store simulated ratings if it doesn't exist
     if 'simulated_ratings' not in rating_test_df.columns:
         rating_test_df['simulated_ratings'] = None
 
+    if 'summary' not in users_df.columns:
+        users_df['summary'] = None
+
     return movies_df, users_df, rating_df, rating_test_df
 
+
 # --------------------------------------------------------------
-def save_data(users_df, rating_test_df):
+def save_data(df, name):
     # Save the updated dataframes to files
-    rating_test_df.to_csv('./Data/rating_test_with_simulated_ratings.pkl')
-    users_df.to_pickle('./Data/user_dataset_with_summaries.pkl')
+    df.to_pickle(f'./Data/{name}.pkl')
+    df.to_csv(f'./Data/{name}.csv')
+
 
 # --------------------------------------------------------------
 def compare_ratings(user_id, llm_ratings, rating_test_df):
-
     predicted_ratings = pd.DataFrame.from_dict(llm_ratings, orient='index', columns=['predicted']).astype(float)
     actual_ratings = rating_test_df[rating_test_df['user_id'] == user_id][['movie_id', 'rating']].set_index(
         'movie_id').astype(float)
@@ -347,12 +370,58 @@ def compare_ratings(user_id, llm_ratings, rating_test_df):
     comparison.columns = ['actual', 'predicted']
     comparison['error'] = comparison['actual'] - comparison['predicted']
 
-    rmse = mean_squared_error(comparison['actual'], comparison['predicted'], squared=False)
+    rmse = root_mean_squared_error(comparison['actual'], comparison['predicted'])
     precision = precision_score(comparison['actual'], comparison['predicted'], average='micro')
     recall = recall_score(comparison['actual'], comparison['predicted'], average='micro')
     accuracy = accuracy_score(comparison['actual'], comparison['predicted'].round())
 
     return rmse, precision, recall, accuracy
+
+
+# --------------------------------------------------------------
+def filter_ratings(movies_df, rating_df, rating_test_df):
+    valid_movie_ids = movies_df['movie_id'].unique()
+    rating_df = rating_df[rating_df['movie_id'].isin(valid_movie_ids)]
+    rating_test_df = rating_test_df[rating_test_df['movie_id'].isin(valid_movie_ids)]
+    return rating_df, rating_test_df
+
+
+# --------------------------------------------------------------
+def evaluate_result(dataframe):
+    dataframe['rating'] = dataframe['rating'].astype(int)
+    dataframe['simulated_ratings'] = dataframe['simulated_ratings'].astype(int)
+
+    # RMSE
+    rmse = root_mean_squared_error(dataframe['rating'], dataframe['simulated_ratings'])
+
+    # Exact match
+    exact_matches = (dataframe['rating'] == dataframe['simulated_ratings'])
+    exact_match_count = exact_matches.sum()
+    exact_match_percentage = exact_match_count / len(dataframe) * 100
+
+    # Off by 1 level
+    off_by_1 = (dataframe['rating'] - dataframe['simulated_ratings']).abs() == 1
+    off_by_1_count = off_by_1.sum()
+    off_by_1_percentage = off_by_1_count / len(dataframe) * 100
+
+    # Off by more than 1 level
+    off_by_more_than_1 = (dataframe['rating'] - dataframe['simulated_ratings']).abs() > 1
+    off_by_more_than_1_count = off_by_more_than_1.sum()
+    off_by_more_than_1_percentage = off_by_more_than_1_count / len(dataframe) * 100
+
+    # Weighted accuracy
+    weighted_accuracy = (exact_matches * 1 + off_by_1 * 0.8).sum() / len(dataframe)
+
+    # Output the results
+    print(f"RMSE: {rmse}")
+    print(f"Exact match count: {exact_match_count}")
+    print(f"Exact match percentage: {exact_match_percentage:.2f}%")
+    print(f"Off by 1 level count: {off_by_1_count}")
+    print(f"Off by 1 level percentage: {off_by_1_percentage:.2f}%")
+    print(f"Off by more than 1 level count: {off_by_more_than_1_count}")
+    print(f"Off by more than 1 level percentage: {off_by_more_than_1_percentage:.2f}%")
+    print(f"Weighted Accuracy: {weighted_accuracy:.2f}")
+
 
 # --------------------------------------------------------------
 if __name__ == "__main__":
@@ -360,18 +429,22 @@ if __name__ == "__main__":
     # loading movielens dataset
     movies_df, users_df, rating_df, rating_test_df = load_data()
 
+    # Filtering out invalid movie_ids
+    rating_df, rating_test_df = filter_ratings(movies_df, rating_df, rating_test_df)
+
     rmse_list, precision_list, recall_list, accuracy_list = [], [], [], []
 
-    # user_ids = rating_test_df['user_id'].unique()
-    # test
-    user_ids = [2, 3, 4]
+    user_ids = rating_test_df['user_id'].unique()
+    # user_ids = [2, 3, 4]
 
     # Track token usage and evaluate results
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_cost = 0.0
 
-    # generating user profile summary
+    temp_token_counter = 0
+
+    # Generating user profile
     for user_id in tqdm(user_ids, desc="Processing users and generating summary profile"):
         if users_df.loc[users_df['user_id'] == user_id, 'summary'].any():
             continue
@@ -381,35 +454,67 @@ if __name__ == "__main__":
             users_df.loc[users_df['user_id'] == user_id, 'summary'] = summary
             total_prompt_tokens += tokens_analysis['prompt_tokens']
             total_completion_tokens += tokens_analysis['completion_tokens']
+            temp_token_counter += tokens_analysis['prompt_tokens'] + tokens_analysis['completion_tokens']
 
-    for user_id in tqdm(user_ids, desc="generating simulated ratings"):
+            # Check token limits
+            if temp_token_counter > 35000:  # Using a safe margin
+                print("Sleeping to respect the token limit...")
+                # reset the token counter
+                temp_token_counter = 0
+                time.sleep(60)  # Sleep for a minute before making new requests
 
-            llm_ratings, tokens_ratings = rate_new_movies(user_id, summary, last_N_movies)
+            # Saving summaries
+            save_data(users_df, 'users_with_summary_df')
+
+    temp_token_counter = 0
+    # Generating the ratings
+    for user_id in tqdm(user_ids, desc="Generating simulated ratings"):
+        # isolating user's ratings in the test set
+        user_ratings = rating_test_df[rating_test_df['user_id'] == user_id]
+
+        # we might have some values from previous run
+        missing_ratings = user_ratings[user_ratings['simulated_ratings'].isnull()]
+
+        # getting the summary for the user
+        summary = users_df.loc[users_df['user_id'] == user_id, 'summary'].values[0]
+
+        # we will not run this part if we have all ratings for the user
+        if not missing_ratings.empty:
+            last_N_movies = get_last_ratings(user_id, n=10)
+
+            llm_ratings, tokens_ratings = rate_new_movies(user_id, summary, last_N_movies, missing_ratings)
             total_prompt_tokens += tokens_ratings['prompt_tokens']
             total_completion_tokens += tokens_ratings['completion_tokens']
+            temp_token_counter = tokens_ratings['prompt_tokens'] + tokens_ratings['completion_tokens']
+
+            # Check token limits
+            if temp_token_counter > 35000:  # Using a safe margin
+                # reset counter
+                temp_token_counter = 0
+                print("Sleeping to respect the token limit...")
+                time.sleep(60)  # Sleep for a minute before making new requests
 
             llm_ratings = {int(movie_id): int(rating) for movie_id, rating in llm_ratings.items()}
 
             for movie_id, rating in llm_ratings.items():
                 rating_test_df.loc[(rating_test_df['user_id'] == user_id) & (
-                            rating_test_df['movie_id'] == movie_id), 'simulated_ratings'] = rating
+                        rating_test_df['movie_id'] == movie_id), 'simulated_ratings'] = rating
 
-            rmse, precision, recall, accuracy = compare_ratings(user_id, llm_ratings, rating_test_df)
+            # rmse, precision, recall, accuracy = compare_ratings(user_id, llm_ratings, rating_test_df)
+            # rmse_list.append(rmse)
+            # precision_list.append(precision)
+            # recall_list.append(recall)
+            # accuracy_list.append(accuracy)
 
-            rmse_list.append(rmse)
-            precision_list.append(precision)
-            recall_list.append(recall)
-            accuracy_list.append(accuracy)
+            save_data(rating_test_df, 'rating_test_df')
 
-            save_data(users_df, rating_test_df)
-
-    total_rmse = sum(rmse_list) / len(rmse_list)
-    total_precision = sum(precision_list) / len(precision_list)
-    total_recall = sum(recall_list) / len(recall_list)
-    total_accuracy = sum(accuracy_list) / len(accuracy_list)
+    # total_rmse = sum(rmse_list) / len(rmse_list)
+    # total_precision = sum(precision_list) / len(precision_list)
+    # total_recall = sum(recall_list) / len(recall_list)
+    # total_accuracy = sum(accuracy_list) / len(accuracy_list)
 
     total_cost = ((total_prompt_tokens / 1000000) * 0.5) + (
-                (total_completion_tokens / 1000000) * 1.5)  # Cost calculation
+            (total_completion_tokens / 1000000) * 1.5)  # Cost calculation
 
     print("\nToken Usage and Cost:")
     print(f"Prompt Tokens: {total_prompt_tokens}")
@@ -418,7 +523,9 @@ if __name__ == "__main__":
     print(f"Estimated Cost (USD): {total_cost:.5f}")
 
     print("\nOverall Metrics:")
-    print(f"RMSE: {total_rmse:.4f}")
-    print(f"Precision: {total_precision:.4f}")
-    print(f"Recall: {total_recall:.4f}")
-    print(f"Accuracy: {total_accuracy:.4f}")
+
+    evaluate_result(rating_test_df)
+    # print(f"RMSE: {total_rmse:.4f}")
+    # print(f"Precision: {total_precision:.4f}")
+    # print(f"Recall: {total_recall:.4f}")
+    # print(f"Accuracy: {total_accuracy:.4f}")
