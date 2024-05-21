@@ -6,6 +6,7 @@ from sklearn.metrics import root_mean_squared_error, precision_score, recall_sco
 from tqdm import tqdm
 import time
 import os
+import re
 
 # Set your OpenAI API key
 KEY = "sk-proj-AycHzZMxqZscz8ltuD5iT3BlbkFJvJPLk9TbP9cMwDCZJd2w"
@@ -57,10 +58,10 @@ include what type of movies the user enjoys or is not interested and provide imp
 should be so clear that by reading the summary we could predict The user's potential rating based on the summary. 
 output should be a JSON file. Below is an example of expected output:
 
-"Summary": "User enjoys movies primarily in the genres of Comedy, Romance, and Drama. They have consistently rated 
+{{"Summary": "User enjoys movies primarily in the genres of Comedy, Romance, and Drama. They have consistently rated 
 movies in these genres highly (4.2 on average). On the other hand, the user seems less interested in movies in the 
 genres of Animation, Sci-Fi, Action, and Thriller (2 on average). the user has a preference for character-driven 
-narratives with emotional depth and relatable themes, and strong storyline."
+narratives with emotional depth and relatable themes, and strong storyline."}}
 """
 
     return prompt
@@ -101,10 +102,40 @@ Analysis:
 Based on the user information, user's last 10 movies, and user's characteristics from Analysis, rate the following 
 movies (scale 1-5) on behalf of the user: {movies_summary}
 
-Output should be a JSON file where the keys are movie_id and values are ratings(1-5), see below example: 
-{{123: 4}} (in this example, 123 is movie_id and 4 is the rating)
+I want you to generate a JSON output containing movie ratings. The JSON format should be strictly as follows:
 
+{{
+  "movie_id1": rating1,
+  "movie_id2": rating2,
+  ...
+}}
 
+Each key should be a movie_id (an integer), and each value should be a rating (an integer). Below is an example of 
+the ACCEPTED output:
+
+{{
+  123: 4,
+  456: 5
+}}
+
+Below is examples of the NOT ACCEPTED output:
+NOT ACCEPTED:
+{{
+  "Movie ID": 123,
+  "Rating": 4
+}}
+
+NOT ACCEPTED:
+{{
+  'Movie ID: 33': 'Rating : 4'
+}}
+
+NOT ACCEPTED:
+{{
+  'movie_id33': '4'
+}}
+
+Please ensure your response strictly follows the ACCEPTED format. Provide multiple movie ratings as needed.
 """
     return prompt
 
@@ -179,10 +210,11 @@ Based on this comprehensive set of data, provide an in-depth summary of the user
 characteristics. Include details on the types of movies the user enjoys or is not interested in, and highlight 
 important factors that influence the user's preferences. The summary should be a coherent, stand-alone analysis that 
 integrates all the information without referring to updates or previous summaries. Consider adding more details than 
-previous summary given the new data. The output should be a JSON file. The output should be a JSON file. Below is an 
+previous summary given the new data. It should be so clear that by reading the summary we could predict The user's 
+potential rating based on the summary.The output should be a JSON file. The output should be a JSON file. Below is an 
 example of expected output:
 
-"Summary": "sample summary"
+{{"Summary": "sample summary"}}
 """
     return prompt
 
@@ -254,7 +286,7 @@ def compare_ratings_individual_user(user_id, llm_ratings):
 
 
 # --------------------------------------------------------------
-def get_llm_response(prompt, mode):
+def get_llm_response(prompt, mode, max_retries=3):
     """
     sending the prompt to the LLM and get back the response
     """
@@ -266,71 +298,73 @@ def get_llm_response(prompt, mode):
 
     client = OpenAI(api_key=KEY)
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo-0125",
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": instructions},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=500,
-            n=1,
-            temperature=0.7
-        )
-
-        tokens = response.usage
-
-        tokens = {
-            'prompt_tokens': response.usage.prompt_tokens,
-            'completion_tokens': response.usage.completion_tokens,
-            'total_tokens': response.usage.total_tokens
-        }
-        # print(f"Tokens used: {tokens}")
-
+    for attempt in range(max_retries):
         try:
-            output = json.loads(response.choices[0].message.content)
-            if mode == "summary":
-                return output["Summary"], tokens
-            elif mode == "rating":
-                return output, tokens
-            else:
-                print(f"invalid mode: {mode}")
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo-0125",
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": instructions},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                n=1,
+                temperature=0.7
+            )
 
-        except json.JSONDecodeError:
-            print("Invalid JSON from LLM. Adjust the prompt or review the response.")
-            return [], tokens
+            tokens = response.usage
 
-        return response.choices[0].message.content.strip(), tokens
+            tokens = {
+                'prompt_tokens': response.usage.prompt_tokens,
+                'completion_tokens': response.usage.completion_tokens,
+                'total_tokens': response.usage.total_tokens
+            }
+            # print(f"Tokens used: {tokens}")
 
-    except openai.APIConnectionError as e:
-        print("The server could not be reached")
-        print(e.__cause__)  # an underlying Exception, likely raised within httpx.
-    except openai.RateLimitError as e:
-        print("A 429 status code was received; we should back off a bit.")
-    except openai.APIStatusError as e:
-        print("Another non-200-range status code was received")
-        print(e.status_code)
-        print(e.response)
+            try:
+                output = json.loads(response.choices[0].message.content)
+                if mode == "summary":
+                    return output["Summary"], tokens
+                elif mode == "rating":
+                    return output, tokens
+                else:
+                    print(f"Invalid mode: {mode}")
+                    return [], tokens
 
+            except json.JSONDecodeError:
+                print(f"Invalid JSON from LLM on attempt {attempt + 1}. Retrying...")
+
+        except openai.APIConnectionError as e:
+            print("The server could not be reached")
+            print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+        except openai.RateLimitError as e:
+            print("A 429 status code was received; we should back off a bit.")
+        except openai.APIStatusError as e:
+            print("Another non-200-range status code was received")
+            print(e.status_code)
+            print(e.response)
+
+    print("Max retries exceeded. Returning empty response.")
+    return [], {}
 
 # --------------------------------------------------------------
 def load_data():
     # Paths for the processed files
-    processed_users_file = "./Data/users_with_summary_df.pkl"
-    processed_ratings_file = "./Data/rating_test_df.pkl"
+    processed_users_file = "./Data/users_with_summary_df.csv"
+    processed_ratings_file = "./Data/rating_test_df_test.csv"
+
 
     # loading users dataframe
     if os.path.exists(processed_users_file):
         # Load the processed files if they exist
-        users_df = pd.read_pickle(processed_users_file)
+        users_df = pd.read_csv(processed_users_file)
     else:
         users_df = pd.read_pickle("./Data/user_dataset.pkl")
         users_df = users_df[["user_id", "user_info"]]
 
     # loading ratings dataframe
     if os.path.exists(processed_ratings_file):
-        rating_test_df = pd.read_pickle(processed_ratings_file)
+        rating_test_df = pd.read_csv(processed_ratings_file)
 
     else:
         rating_test_df = pd.read_csv(f'{Path}/u1.test', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'],
@@ -388,6 +422,9 @@ def filter_ratings(movies_df, rating_df, rating_test_df):
 
 # --------------------------------------------------------------
 def evaluate_result(dataframe):
+
+    dataframe = dataframe.dropna(subset=['simulated_ratings', 'rating'])
+
     dataframe['rating'] = dataframe['rating'].astype(int)
     dataframe['simulated_ratings'] = dataframe['simulated_ratings'].astype(int)
 
@@ -422,6 +459,30 @@ def evaluate_result(dataframe):
     print(f"Off by more than 1 level percentage: {off_by_more_than_1_percentage:.2f}%")
     print(f"Weighted Accuracy: {weighted_accuracy:.2f}")
 
+# --------------------------------------------------------------
+
+def clean_key(key):
+    # Use regex to extract numeric part of the key
+    match = re.search(r'\d+', key)
+    if match:
+        return int(match.group(0))
+    return None
+# --------------------------------------------------------------
+def clean_value(value):
+    # Attempt to convert the value to an integer
+    try:
+        return int(value)
+    except ValueError:
+        return None
+# --------------------------------------------------------------
+def parse_llm_ratings(llm_ratings):
+    cleaned_ratings = {}
+    for movie_id, rating in llm_ratings.items():
+        clean_movie_id = clean_key(movie_id)
+        clean_rating = clean_value(rating)
+        if clean_movie_id is not None and clean_rating is not None:
+            cleaned_ratings[clean_movie_id] = clean_rating
+    return cleaned_ratings
 
 # --------------------------------------------------------------
 if __name__ == "__main__":
@@ -434,8 +495,8 @@ if __name__ == "__main__":
 
     rmse_list, precision_list, recall_list, accuracy_list = [], [], [], []
 
-    user_ids = rating_test_df['user_id'].unique()
-    # user_ids = [2, 3, 4]
+    # user_ids = rating_test_df['user_id'].unique()
+    user_ids = [1]
 
     # Track token usage and evaluate results
     total_prompt_tokens = 0
@@ -457,7 +518,7 @@ if __name__ == "__main__":
             temp_token_counter += tokens_analysis['prompt_tokens'] + tokens_analysis['completion_tokens']
 
             # Check token limits
-            if temp_token_counter > 35000:  # Using a safe margin
+            if temp_token_counter > 55000:  # Using a safe margin
                 print("Sleeping to respect the token limit...")
                 # reset the token counter
                 temp_token_counter = 0
@@ -488,13 +549,14 @@ if __name__ == "__main__":
             temp_token_counter = tokens_ratings['prompt_tokens'] + tokens_ratings['completion_tokens']
 
             # Check token limits
-            if temp_token_counter > 35000:  # Using a safe margin
+            if temp_token_counter > 55000:  # Using a safe margin
                 # reset counter
                 temp_token_counter = 0
                 print("Sleeping to respect the token limit...")
                 time.sleep(60)  # Sleep for a minute before making new requests
 
-            llm_ratings = {int(movie_id): int(rating) for movie_id, rating in llm_ratings.items()}
+            llm_ratings = parse_llm_ratings(llm_ratings)
+            # llm_ratings = {int(movie_id): int(rating) for movie_id, rating in llm_ratings.items()}
 
             for movie_id, rating in llm_ratings.items():
                 rating_test_df.loc[(rating_test_df['user_id'] == user_id) & (
@@ -506,7 +568,7 @@ if __name__ == "__main__":
             # recall_list.append(recall)
             # accuracy_list.append(accuracy)
 
-            save_data(rating_test_df, 'rating_test_df')
+            save_data(rating_test_df, 'rating_test_df_test')
 
     # total_rmse = sum(rmse_list) / len(rmse_list)
     # total_precision = sum(precision_list) / len(precision_list)
