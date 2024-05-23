@@ -50,8 +50,7 @@ lusifer.set_saving_path(self, path="")
 A sample experiment on the MovieLens dataset is available: [here](https://github.com/danialebrat/Lusifer/blob/master/movielens100K_example.py)
 
 ## Access Sample Prompts, Datasets, and Outputs
-Explore sample prompts, datasets, and outputs [here](https://github.com/danialebrat/Lusifer/blob/master/movielens100K_example.py](https://github.com/danialebrat/Lusifer/tree/master/Samples)
-
+Explore sample prompts, datasets, and outputs [here](https://github.com/danialebrat/Lusifer/tree/master/Samples).
 Contributions
 This is the first version of Lusifer. We welcome contributions and suggestions to improve and expand the capabilities of this tool.
 
