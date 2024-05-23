@@ -9,10 +9,10 @@ import os
 import re
 
 # Set your OpenAI API key
-KEY = "sk-proj-AycHzZMxqZscz8ltuD5iT3BlbkFJvJPLk9TbP9cMwDCZJd2w"
+KEY = "OpenAI API key"
 
 # path to the folder containing movielens data
-Path = "D:/Canada/Danial/UoW/Dataset/MovieLens/100K/ml-100k"
+Path = "path to your folder"
 
 
 # --------------------------------------------------------------
@@ -350,8 +350,8 @@ def get_llm_response(prompt, mode, max_retries=3):
 # --------------------------------------------------------------
 def load_data():
     # Paths for the processed files
-    processed_users_file = "./Data/users_with_summary_df.csv"
-    processed_ratings_file = "./Data/rating_test_df_test.csv"
+    processed_users_file = "../Samples/Data/users_with_summary_df.csv"
+    processed_ratings_file = "../Samples/Data/rating_test_df_test.csv"
 
 
     # loading users dataframe
@@ -359,7 +359,7 @@ def load_data():
         # Load the processed files if they exist
         users_df = pd.read_csv(processed_users_file)
     else:
-        users_df = pd.read_pickle("./Data/user_dataset.pkl")
+        users_df = pd.read_pickle("../Samples/Data/user_dataset.pkl")
         users_df = users_df[["user_id", "user_info"]]
 
     # loading ratings dataframe
@@ -375,7 +375,7 @@ def load_data():
                             encoding='latin-1')
 
     # Load movies
-    movies_df = pd.read_pickle("./Data/movies_enriched_dataset.pkl")
+    movies_df = pd.read_pickle("../Samples/Data/movies_enriched_dataset.pkl")
     movies_df = movies_df[["movie_id", "movie_info"]]
 
     # Add new column to store simulated ratings if it doesn't exist

@@ -1,18 +1,7 @@
 import openai
 from openai import OpenAI
-import pandas as pd
 import json
-from sklearn.metrics import root_mean_squared_error, precision_score, recall_score, accuracy_score
-from tqdm import tqdm
-import time
-import os
 import re
-
-# Set your OpenAI API key
-KEY = "sk-proj-AycHzZMxqZscz8ltuD5iT3BlbkFJvJPLk9TbP9cMwDCZJd2w"
-
-# path to the folder containing movielens data
-Path = "D:/Canada/Danial/UoW/Dataset/MovieLens/100K/ml-100k"
 
 
 class Lusifer:
@@ -35,6 +24,7 @@ class Lusifer:
         self.item_feature = None  # will be set by user
         self.item_id = None
         self.timestamp = None
+        self.rating = None
 
         # to trace the number of tokens and estimate the cost if needed
         self.temp_token_counter = 0
@@ -45,6 +35,82 @@ class Lusifer:
 
         # prompts
         self.instructions = None
+        self.prompt_summary = None
+        self.prompt_update_summary = None
+        self.prompt_simulate_rating = None
+
+        # saving path
+        self.saving_path = None
+
+    # --------------------------------------------------------------
+    def set_openai_connection(self, api_key, model):
+        """
+        Setting openai connection
+        :param api_key: openai Key
+        :param model: LLM model from openai API
+        :return:
+        """
+        self.api_key = api_key
+        self.model = model
+
+    # --------------------------------------------------------------
+    def set_column_names(self, user_feature, item_feature,
+                         user_id="user_id",
+                         item_id="item_id",
+                         timestamp="timestamp",
+                         rating="rating"):
+        """
+        Setting necessary column names
+        :param user_feature: user feature column
+        :param item_feature: item feature column
+        :param user_id: user_id column
+        :param item_id: item_id column
+        :param timestamp: timestamp column
+        :param rating: rating column
+        :return:
+        """
+
+        self.user_feature = user_feature  # will be set by user
+        self.item_feature = item_feature  # will be set by user
+
+        self.user_id = user_id
+        self.item_id = item_id
+
+        self.timestamp = timestamp
+        self.rating = rating
+
+    # --------------------------------------------------------------
+    def set_llm_instruction(self, instructions):
+        """
+        Set initial instruction of the LLM model
+        :param instructions:
+        :return:
+        """
+
+        self.instructions = instructions
+
+    # --------------------------------------------------------------
+    def set_prompts(self, prompt_summary, prompt_update_summary, prompt_simulate_rating):
+        """
+        Set prompts for Lusifer
+        :param prompt_summary: prompt to generate the first summary
+        :param prompt_update_summary: prompt to update the summary
+        :param prompt_simulate_rating:
+        :return:
+        """
+        self.prompt_summary = None
+        self.prompt_update_summary = None
+        self.prompt_simulate_rating = None
+
+    # --------------------------------------------------------------
+
+    def set_saving_path(self, path=""):
+        """
+        Setting openai connection
+        :param path: path to the folder you want to store the intermediate progress of Lusifer
+        :return:
+        """
+        self.saving_path = path
 
     # --------------------------------------------------------------
     def get_last_ratings(self, user_id, n=20):
@@ -64,16 +130,24 @@ class Lusifer:
     # --------------------------------------------------------------
     # This function needs modification, users should be able to pass the prompt as an argument, but we are also using
     # variables to create the prompt dynamically.
-    def analyze_user_prompt(self, user_info, last_n_items, n):
+    def generate_summary_prompt(self, user_info, last_n_items, n):
         """
         Generating the initial prompt to capture user's characteristics
-        :param user_info: user information (age, gender, occupation)
-        :param last_10_movies: dataframe
+        :param user_info: user information
+        :param last_n_items: dataframe containing last n items
+        :param n: last n items (integer)
         :return:
         """
+        if self.prompt_summary == None:
+            self.prompt_summary = """Analyze the user's characteristics based on the history and provide an indepth 
+            summary of the analysis as a text. include what type of items the user enjoys or is not interested and 
+            provide important factors for the user. It should be so clear that by reading the summary we could 
+            predict The user's potential rating based on the summary. output should be a JSON file. Below is an 
+            example of expected output:"""
+
         # getting rating summary Below is the sample based on Movielens data
         ratings_summary = '\n'.join(
-            f"Movie: {row['movie_info']}\nRating: {row['rating']}" for _, row in last_N_movies.iterrows()
+            f"Item: {row[self.item_feature]}\nRating: {row[self.rating]}" for _, row in last_n_items.iterrows()
         )
 
         # Generating prompt
@@ -82,40 +156,37 @@ class Lusifer:
     User Info:
     {user_info}
     
-    User's Last {n} Movies and Ratings:
+    User's Last {n} items and Ratings:
     {ratings_summary}
+        
+    {self.prompt_summary}
     
-    Analyze the user's characteristics based on the history and provide an indepth summary of the analysis as a text. 
-    include what type of movies the user enjoys or is not interested and provide important factors for the user. It 
-    should be so clear that by reading the summary we could predict The user's potential rating based on the summary. 
-    output should be a JSON file. Below is an example of expected output:
-    
-    {{"Summary": "User enjoys movies primarily in the genres of Comedy, Romance, and Drama. They have consistently rated 
-    movies in these genres highly (4.2 on average). On the other hand, the user seems less interested in movies in the 
-    genres of Animation, Sci-Fi, Action, and Thriller (2 on average). the user has a preference for character-driven 
-    narratives with emotional depth and relatable themes, and strong storyline."}}
+    {{"Summary": "sample summary "}}
     """
 
         return prompt
 
     # --------------------------------------------------------------
-    def rate_new_items_prompt(self, user_info, analysis, last_N_movies, test_movies):
+    def rate_new_items_prompt(self, user_info, summary, last_n_movies, test_set):
         """
         Generate the proper prompt to ask the LLM to provide ratings for the recommendations
         :param user_info: user information (text)
-        :param analysis: LLM's analysis based on user's background (text)
+        :param analysis: LLM's summary of user's behavior based on user's background (text)
         :param test_movies: testset
         :return:
         """
+        if self.prompt_simulate_rating == None:
+            self.prompt_simulate_rating = """Based on the user information, user's last 10 items, and user's 
+            characteristics from Analysis, rate the following items (scale 1-5) on behalf of the user:"""
 
-        # recent movie summaries
-        recent_movies_summary = '\n'.join(
-            f"Movie: {row['movie_info']}\nRating: {row['rating']}" for _, row in last_N_movies.iterrows()
+        # recent items summaries
+        recent_items_summary = '\n'.join(
+            f"Item: {row[self.item_feature]}\nRating: {row[self.rating]}" for _, row in last_n_movies.iterrows()
         )
 
-        # test movie summaries
-        movies_summary = '\n'.join(
-            f"Movie ID: {row['movie_id']}\n{row['movie_info']}" for _, row in test_movies.iterrows()
+        # test items summaries
+        items_summary = '\n'.join(
+            f"Item ID: {row[self.item_id]}\n{row[self.item_feature]}" for _, row in test_set.iterrows()
         )
 
         prompt = f"""
@@ -123,24 +194,25 @@ class Lusifer:
     User Info:
     {user_info}
     
-    User's most recent movies:
-    {recent_movies_summary}
+    User's most recent items:
+    {recent_items_summary}
     
-    Analysis:
-    {analysis}
+    Summary of User's behavior:
+    {summary}
     
-    Based on the user information, user's last 10 movies, and user's characteristics from Analysis, rate the following 
-    movies (scale 1-5) on behalf of the user: {movies_summary}
+    {self.prompt_simulate_rating}
     
-    I want you to generate a JSON output containing movie ratings. The JSON format should be strictly as follows:
+    {items_summary}
+    
+    I want you to generate a JSON output containing item ratings. The JSON format should be strictly as follows:
     
     {{
-      "movie_id1": rating1,
-      "movie_id2": rating2,
+      "item_id1": rating1,
+      "item_id2": rating2,
       ...
     }}
     
-    Each key should be a movie_id (an integer), and each value should be a rating (an integer). Below is an example of 
+    Each key should be a item_id (an integer), and each value should be a rating (an integer). Below is an example of 
     the ACCEPTED output:
     
     {{
@@ -151,18 +223,18 @@ class Lusifer:
     Below is examples of the NOT ACCEPTED output:
     NOT ACCEPTED:
     {{
-      "Movie ID": 123,
+      "Item ID": 123,
       "Rating": 4
     }}
     
     NOT ACCEPTED:
     {{
-      'Movie ID: 33': 'Rating : 4'
+      'Item ID: 33': 'Rating : 4'
     }}
     
     NOT ACCEPTED:
     {{
-      'movie_id33': '4'
+      'item_id33': '4'
     }}
     
     Please ensure your response strictly follows the ACCEPTED format. Provide multiple movie ratings as needed.
@@ -207,13 +279,23 @@ class Lusifer:
 
     def update_summary_prompt(self, previous_summary, user_info, new_chunk):
         """
-        Generate the prompt to update the summary with new movie ratings
+        Generate the prompt to update the summary with new item ratings
         :param previous_summary: str
         :param new_chunk: DataFrame
         :return: str
         """
+        if self.prompt_update_summary == None:
+            self.prompt_update_summary = """Based on this comprehensive set of data, provide an in-depth summary of 
+            the user's movie preferences and characteristics. Include details on the types of movies the user enjoys 
+            or is not interested in, and highlight important factors that influence the user's preferences. The 
+            summary should be a coherent, stand-alone analysis that integrates all the information without referring 
+            to updates or previous summaries. Consider adding more details than previous summary given the new data. 
+            It should be so clear that by reading the summary we could predict The user's potential rating based on 
+            the summary.The output should be a JSON file. The output should be a JSON file. Below is an example of 
+            expected output:"""
+
         ratings_summary = '\n'.join(
-            f"Movie: {row['movie_info']}\nRating: {row['rating']}" for _, row in new_chunk.iterrows()
+            f"Item: {row[self.item_feature]}\nRating: {row[self.rating]}" for _, row in new_chunk.iterrows()
         )
 
         prompt = f"""
@@ -224,16 +306,10 @@ class Lusifer:
     Below is the Previous Summary information about user's characteristics based on their recent ratings:
     {previous_summary}
     
-    Now, we have New Movie Ratings as below:
+    Now, we have New items Ratings as below:
     {ratings_summary}
     
-    Based on this comprehensive set of data, provide an in-depth summary of the user's movie preferences and 
-    characteristics. Include details on the types of movies the user enjoys or is not interested in, and highlight 
-    important factors that influence the user's preferences. The summary should be a coherent, stand-alone analysis that 
-    integrates all the information without referring to updates or previous summaries. Consider adding more details than 
-    previous summary given the new data. It should be so clear that by reading the summary we could predict The user's 
-    potential rating based on the summary.The output should be a JSON file. The output should be a JSON file. Below is an 
-    example of expected output:
+    {self.prompt_update_summary}
     
     {{"Summary": "sample summary"}}
     """
@@ -270,7 +346,7 @@ class Lusifer:
 
         openai.api_key = self.api_key
         instructions = self.instructions
-        client = OpenAI(api_key=KEY)
+        client = OpenAI(api_key=self.api_key)
 
         for attempt in range(max_retries):
             try:
@@ -320,27 +396,20 @@ class Lusifer:
         return [], {}
 
     # --------------------------------------------------------------
-    def load_data(self):
-        """
-        Serves as retry mechanism. In case of any interruption to the program, it should load the data from the last
-        checkpoint :return:
-        """
-
-    # --------------------------------------------------------------
     def save_data(self, df, file_name):
         """
         Save the updated dataframes to files after each update to have checkpoint
          :return:
         """
         # Save the updated dataframes to files
-        df.to_pickle(f'./Data/{file_name}.pkl')
-        df.to_csv(f'./Data/{file_name}.csv')
+        df.to_pickle(f'{self.saving_path}{file_name}.pkl')
+        df.to_csv(f'{self.saving_path}{file_name}.csv')
 
     # --------------------------------------------------------------
     def filter_ratings(self, rating_test_df):
         """
         Make sure we have information about all the items in the test set
-        :param rating_test_df: test set dataframe
+        :param rating_test_df: dataframe
         :return:
         """
         valid_item_ids = self.items_df[self.item_feature].unique()
@@ -360,7 +429,6 @@ class Lusifer:
         if match:
             return int(match.group(0))
         return None
-
 
     # --------------------------------------------------------------
     def clean_value(self, value):
@@ -389,112 +457,4 @@ class Lusifer:
             if clean_item_id is not None and clean_rating is not None:
                 cleaned_ratings[clean_item_id] = clean_rating
         return cleaned_ratings
-
-
 # --------------------------------------------------------------
-if __name__ == "__main__":
-
-    # loading movielens dataset
-    movies_df, users_df, rating_df, rating_test_df = load_data()
-
-    # Filtering out invalid movie_ids
-    rating_df, rating_test_df = filter_ratings(movies_df, rating_df, rating_test_df)
-
-    rmse_list, precision_list, recall_list, accuracy_list = [], [], [], []
-
-    # user_ids = rating_test_df['user_id'].unique()
-    user_ids = [1]
-
-    # Track token usage and evaluate results
-    total_prompt_tokens = 0
-    total_completion_tokens = 0
-    total_cost = 0.0
-
-    temp_token_counter = 0
-
-    # Generating user profile
-    for user_id in tqdm(user_ids, desc="Processing users and generating summary profile"):
-        if users_df.loc[users_df['user_id'] == user_id, 'summary'].any():
-            continue
-
-        else:
-            summary, tokens_analysis, last_N_movies = analyze_user(user_id, recent_movies_to_consider=60)
-            users_df.loc[users_df['user_id'] == user_id, 'summary'] = summary
-            total_prompt_tokens += tokens_analysis['prompt_tokens']
-            total_completion_tokens += tokens_analysis['completion_tokens']
-            temp_token_counter += tokens_analysis['prompt_tokens'] + tokens_analysis['completion_tokens']
-
-            # Check token limits
-            if temp_token_counter > 55000:  # Using a safe margin
-                print("Sleeping to respect the token limit...")
-                # reset the token counter
-                temp_token_counter = 0
-                time.sleep(60)  # Sleep for a minute before making new requests
-
-            # Saving summaries
-            save_data(users_df, 'users_with_summary_df')
-
-    temp_token_counter = 0
-    # Generating the ratings
-    for user_id in tqdm(user_ids, desc="Generating simulated ratings"):
-        # isolating user's ratings in the test set
-        user_ratings = rating_test_df[rating_test_df['user_id'] == user_id]
-
-        # we might have some values from previous run
-        missing_ratings = user_ratings[user_ratings['simulated_ratings'].isnull()]
-
-        # getting the summary for the user
-        summary = users_df.loc[users_df['user_id'] == user_id, 'summary'].values[0]
-
-        # we will not run this part if we have all ratings for the user
-        if not missing_ratings.empty:
-            last_N_movies = get_last_ratings(user_id, n=10)
-
-            llm_ratings, tokens_ratings = rate_new_movies(user_id, summary, last_N_movies, missing_ratings)
-            total_prompt_tokens += tokens_ratings['prompt_tokens']
-            total_completion_tokens += tokens_ratings['completion_tokens']
-            temp_token_counter = tokens_ratings['prompt_tokens'] + tokens_ratings['completion_tokens']
-
-            # Check token limits
-            if temp_token_counter > 55000:  # Using a safe margin
-                # reset counter
-                temp_token_counter = 0
-                print("Sleeping to respect the token limit...")
-                time.sleep(60)  # Sleep for a minute before making new requests
-
-            llm_ratings = parse_llm_ratings(llm_ratings)
-            # llm_ratings = {int(movie_id): int(rating) for movie_id, rating in llm_ratings.items()}
-
-            for movie_id, rating in llm_ratings.items():
-                rating_test_df.loc[(rating_test_df['user_id'] == user_id) & (
-                        rating_test_df['movie_id'] == movie_id), 'simulated_ratings'] = rating
-
-            # rmse, precision, recall, accuracy = compare_ratings(user_id, llm_ratings, rating_test_df)
-            # rmse_list.append(rmse)
-            # precision_list.append(precision)
-            # recall_list.append(recall)
-            # accuracy_list.append(accuracy)
-
-            save_data(rating_test_df, 'rating_test_df_test')
-
-    # total_rmse = sum(rmse_list) / len(rmse_list)
-    # total_precision = sum(precision_list) / len(precision_list)
-    # total_recall = sum(recall_list) / len(recall_list)
-    # total_accuracy = sum(accuracy_list) / len(accuracy_list)
-
-    total_cost = ((total_prompt_tokens / 1000000) * 0.5) + (
-            (total_completion_tokens / 1000000) * 1.5)  # Cost calculation
-
-    print("\nToken Usage and Cost:")
-    print(f"Prompt Tokens: {total_prompt_tokens}")
-    print(f"Completion Tokens: {total_completion_tokens}")
-    print(f"Total Tokens: {total_prompt_tokens + total_completion_tokens}")
-    print(f"Estimated Cost (USD): {total_cost:.5f}")
-
-    print("\nOverall Metrics:")
-
-    evaluate_result(rating_test_df)
-    # print(f"RMSE: {total_rmse:.4f}")
-    # print(f"Precision: {total_precision:.4f}")
-    # print(f"Recall: {total_recall:.4f}")
-    # print(f"Accuracy: {total_accuracy:.4f}")
