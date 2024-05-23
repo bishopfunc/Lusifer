@@ -142,8 +142,7 @@ class Lusifer:
             self.prompt_summary = """Analyze the user's characteristics based on the history and provide an indepth 
             summary of the analysis as a text. include what type of items the user enjoys or is not interested and 
             provide important factors for the user. It should be so clear that by reading the summary we could 
-            predict The user's potential rating based on the summary. output should be a JSON file. Below is an 
-            example of expected output:"""
+            predict The user's potential rating based on the summary. """
 
         # getting rating summary Below is the sample based on Movielens data
         ratings_summary = '\n'.join(
@@ -160,6 +159,8 @@ class Lusifer:
     {ratings_summary}
         
     {self.prompt_summary}
+    
+    output should be a JSON file. Below is an example of expected output:
     
     {{"Summary": "sample summary "}}
     """
@@ -291,8 +292,7 @@ class Lusifer:
             summary should be a coherent, stand-alone analysis that integrates all the information without referring 
             to updates or previous summaries. Consider adding more details than previous summary given the new data. 
             It should be so clear that by reading the summary we could predict The user's potential rating based on 
-            the summary.The output should be a JSON file. The output should be a JSON file. Below is an example of 
-            expected output:"""
+            the summary."""
 
         ratings_summary = '\n'.join(
             f"Item: {row[self.item_feature]}\nRating: {row[self.rating]}" for _, row in new_chunk.iterrows()
@@ -310,6 +310,8 @@ class Lusifer:
     {ratings_summary}
     
     {self.prompt_update_summary}
+    
+    The output should be a JSON file. The output should be a JSON file. Below is an example of expected output:
     
     {{"Summary": "sample summary"}}
     """
