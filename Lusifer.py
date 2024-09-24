@@ -2,6 +2,8 @@ import openai
 from openai import OpenAI
 import json
 import re
+import time
+import pandas as pd
 
 
 class Lusifer:
@@ -32,11 +34,13 @@ class Lusifer:
             'prompt_tokens': 0,
             'completion_tokens': 0,
         }
+        self.RPD = 0
+        self.token_clock = 0
 
         # prompts
         self.instructions = None
-        self.prompt_summary = None
-        self.prompt_update_summary = None
+        self.prompt_user_profile = None
+        self.prompt_update_user_profile = None
         self.prompt_simulate_rating = None
 
         # saving path
@@ -90,17 +94,63 @@ class Lusifer:
         self.instructions = instructions
 
     # --------------------------------------------------------------
-    def set_prompts(self, prompt_summary, prompt_update_summary, prompt_simulate_rating):
+    def set_prompts(self, prompt_user_profile=None, prompt_update_user_profile=None, prompt_simulate_rating=None):
         """
         Set prompts for Lusifer
-        :param prompt_summary: prompt to generate the first summary
-        :param prompt_update_summary: prompt to update the summary
+        :param prompt_user_profile: prompt to generate the first summary
+        :param prompt_update_user_profile: prompt to update the summary
         :param prompt_simulate_rating:
         :return:
         """
-        self.prompt_summary = None
-        self.prompt_update_summary = None
-        self.prompt_simulate_rating = None
+        if prompt_user_profile is None:
+            self.prompt_user_profile = """
+    You are an expert data analyst specializing in user behavior and preferences in movies.
+
+    **Task**: Analyze the user's characteristics based on their previous ratings and provide an in-depth profile.
+    
+    **Instructions**:
+    - Identify genres, themes, directors, actors, and other movie attributes the user enjoys or dislikes.
+    - Highlight any patterns or preferences evident from the ratings.
+    - The profile should be detailed enough to predict the user's potential ratings for unseen movies.
+    - Avoid mentioning the process or using phrases like "the user seems to".
+    """
+        else:
+            self.prompt_user_profile = prompt_user_profile
+
+
+        if prompt_update_user_profile is None:
+            self.prompt_update_user_profile = """
+    You are updating an existing user profile based on new rating data.
+    
+    **Task**: Integrate the new ratings into the user's profile to refine and enhance the analysis.
+    
+    **Instructions**:
+    - Incorporate insights from the new ratings with the existing profile.
+    - Update any changes in preferences or new patterns that emerge.
+    - Ensure the profile remains comprehensive and cohesive.
+    - Do not reference previous summaries or mention that this is an update.
+            """
+        else:
+            self.prompt_update_user_profile = prompt_update_user_profile
+
+
+        if prompt_simulate_rating is None:
+            self.prompt_simulate_rating = """
+    You are an expert movie critic and data analyst.
+
+    **Task**: Based on the user's profile and recent movie interactions, rate the following movies on behalf of the user.
+    
+    **Instructions**:
+    - Carefully consider the user's preferences, dislikes, and behavioral patterns as outlined in the user profile.
+    - Analyze each movie's attributes (genre, director, actors, plot) and determine how well it aligns with the user's tastes.
+    - Assign a rating from 1 to 5 for each movie, where 1 is the lowest (strong dislike) and 5 is the highest (strong like).
+    - Do not include any explanations or additional text; only provide the ratings in the specified format.
+    
+    **Movies to Rate**:
+    - Each movie is provided with its ID and description.
+    """
+        else:
+            self.prompt_simulate_rating = prompt_simulate_rating
 
     # --------------------------------------------------------------
 
@@ -124,51 +174,109 @@ class Lusifer:
                                                                                              ascending=False)
         if n is not None:
             user_ratings = user_ratings.head(n)
-        user_items = movies_df[self.items_df[self.item_id].isin(user_ratings[self.item_id])]
+        user_items = self.items_df[self.items_df[self.item_id].isin(user_ratings[self.item_id])]
         return user_ratings.merge(user_items, on=self.item_id)
 
     # --------------------------------------------------------------
-    # This function needs modification, users should be able to pass the prompt as an argument, but we are also using
-    # variables to create the prompt dynamically.
-    def generate_summary_prompt(self, user_info, last_n_items, n):
+    def generate_user_profile_prompt(self, user_info, last_n_items, update=False, current_profile=None):
         """
         Generating the initial prompt to capture user's characteristics
         :param user_info: user information
         :param last_n_items: dataframe containing last n items
-        :param n: last n items (integer)
+        :param update: True if we want to update the user_profile
+        :param current_profile: current user_profile
         :return:
         """
-        if self.prompt_summary == None:
-            self.prompt_summary = """Analyze the user's characteristics based on the history and provide an indepth 
-            summary of the analysis as a text. include what type of items the user enjoys or is not interested and 
-            provide important factors for the user. It should be so clear that by reading the summary we could 
-            predict The user's potential rating based on the summary. """
+        if update:
+            prompt_user_profile = self.prompt_user_profile
+            user_info = current_profile
+        else:
+            prompt_user_profile = self.prompt_update_user_profile
 
-        # getting rating summary Below is the sample based on Movielens data
+
+        # getting rating summary and movie summaries: Below is the sample based on Movielens data
         ratings_summary = '\n'.join(
-            f"Item: {row[self.item_feature]}\nRating: {row[self.rating]}" for _, row in last_n_items.iterrows()
+            f"- **Movie**: {row[self.item_feature]}, **Rating**: {row[self.rating]}"
+            for _, row in last_n_items.iterrows()
         )
 
         # Generating prompt
         prompt = f"""
-    Consider below information about the user:
-    User Info:
+    You are provided with the following information about a user:
+
+    **User Profile**: 
     {user_info}
     
-    User's Last {n} items and Ratings:
+    **Recent Ratings**::
     {ratings_summary}
         
-    {self.prompt_summary}
+    {prompt_user_profile}
     
-    output should be a JSON file. Below is an example of expected output:
+    {self.user_profile_output_prompt()}
     
-    {{"Summary": "sample summary "}}
     """
 
         return prompt
 
     # --------------------------------------------------------------
-    def rate_new_items_prompt(self, user_info, summary, last_n_movies, test_set):
+    def user_profile_output_prompt(self):
+        """
+        output instructions
+        :return: prompt
+        """
+        output_instructions = """
+        **Output Format**:
+        - Provide the user_profile in a JSON object under the key "user_profile".
+        - Ensure the JSON is properly formatted for parsing.
+        - Do not include any additional text outside the JSON object.
+                
+        ```json
+        {
+          "user_profile": "Detailed analysis of the user's movie preferences."
+        }
+        """
+
+        return output_instructions
+
+    def simulated_rating_output_prompt(self):
+        """
+        instructions for the output format in simulating the ratings process
+        :return:
+        """
+        output_instructions = f"""
+        
+        **Output Requirements**:
+        - Provide the ratings in a JSON object.
+        - The JSON should have movie IDs as keys and ratings as integer values.
+        - The format must be strictly as follows:
+
+        ```json
+        {{
+          "movie_id1": rating1,
+          "movie_id2": rating2,
+          ...
+        }}
+    
+        **Example of ACCEPTED output:**
+        
+        {{
+          123: 4,
+          456: 5
+        }}
+        
+        **Important:**
+        
+        - Do not include any text outside the JSON object.
+        - Ensure that the JSON is properly formatted for parsing.
+        - Do not use quotes around numeric values.
+        - Do not include additional keys or nested structures.
+        - Avoid any commentary or explanation in your response. 
+        """
+
+        return output_instructions
+
+    # --------------------------------------------------------------
+    def rate_new_items_prompt(self, user_profile, last_n_movies, test_set):
         """
         Generate the proper prompt to ask the LLM to provide ratings for the recommendations
         :param user_info: user information (text)
@@ -176,74 +284,39 @@ class Lusifer:
         :param test_movies: testset
         :return:
         """
-        if self.prompt_simulate_rating == None:
-            self.prompt_simulate_rating = """Based on the user information, user's last 10 items, and user's 
-            characteristics from Analysis, rate the following items (scale 1-5) on behalf of the user:"""
 
-        # recent items summaries
+        # Recent items summaries
         recent_items_summary = '\n'.join(
-            f"Item: {row[self.item_feature]}\nRating: {row[self.rating]}" for _, row in last_n_movies.iterrows()
+            f"- **Movie**: {row[self.item_feature]}, **Rating**: {row[self.rating]}"
+            for _, row in last_n_movies.iterrows()
         )
 
-        # test items summaries
+        # Test items summaries
         items_summary = '\n'.join(
-            f"Item ID: {row[self.item_id]}\n{row[self.item_feature]}" for _, row in test_set.iterrows()
+            f"- **Movie ID**: {row[self.item_id]}\n  **Description**: {row[self.item_feature]}"
+            for _, row in test_set.iterrows()
         )
 
         prompt = f"""
-    Consider below information about a user
-    User Info:
-    {user_info}
-    
-    User's most recent items:
-    {recent_items_summary}
-    
-    Summary of User's behavior:
-    {summary}
-    
-    {self.prompt_simulate_rating}
-    
-    {items_summary}
-    
-    I want you to generate a JSON output containing item ratings. The JSON format should be strictly as follows:
-    
-    {{
-      "item_id1": rating1,
-      "item_id2": rating2,
-      ...
-    }}
-    
-    Each key should be a item_id (an integer), and each value should be a rating (an integer). Below is an example of 
-    the ACCEPTED output:
-    
-    {{
-      123: 4,
-      456: 5
-    }}
-    
-    Below is examples of the NOT ACCEPTED output:
-    NOT ACCEPTED:
-    {{
-      "Item ID": 123,
-      "Rating": 4
-    }}
-    
-    NOT ACCEPTED:
-    {{
-      'Item ID: 33': 'Rating : 4'
-    }}
-    
-    NOT ACCEPTED:
-    {{
-      'item_id33': '4'
-    }}
-    
-    Please ensure your response strictly follows the ACCEPTED format. Provide multiple movie ratings as needed.
-    """
+        You are provided with the following information about a user:
+
+        **User Profile**:
+        {user_profile}
+
+        **User's Recent Ratings**:
+        {recent_items_summary}
+
+        {self.prompt_simulate_rating}
+
+        {items_summary}
+        
+        {self.simulated_rating_output_prompt()}
+        """
+
         return prompt
 
     # --------------------------------------------------------------
-    def generate_summary(self, user_id, recent_items_to_consider=60, chunk_size=20):
+    def generate_user_profile(self, user_id, recent_items_to_consider=40, chunk_size=5):
         """
         Generates user's summary of behavior
         :param user_id: int
@@ -251,79 +324,69 @@ class Lusifer:
         :param chunk_size: int
         :return:
         """
-        total_tokens = {
-            'prompt_tokens': 0,
-            'completion_tokens': 0,
-        }
 
         user_info = self.users_df[self.users_df[self.user_id] == user_id][self.user_feature].values[0]
         last_n_items = self.get_last_ratings(user_id, n=recent_items_to_consider)
 
-        # Get the first chunk of movies
-        first_chunk = last_n_items[:chunk_size]
-        prompt = self.generate_summary_prompt(user_info, first_chunk, n=chunk_size)
-        summary, tokens = self.get_llm_response(prompt, mode="summary")
+        # Initialize the user profile
+        updated_user_profile = None
 
-        # Process the remaining ratings in chunks and update the summary
-        remaining_ratings = last_n_items[chunk_size:]  # Exclude the first chunk already analyzed
-        for i in range(0, len(remaining_ratings), chunk_size):
-            chunk = remaining_ratings[i:i + chunk_size]
+        # Process ratings in chunks
+        for i in range(0, len(last_n_items), chunk_size):
+            chunk = last_n_items[i:i + chunk_size]
             if not chunk.empty:
-                prompt = self.update_summary_prompt(summary, user_info, chunk)
-                summary, tokens_chunk = self.get_llm_response(prompt, mode="summary")
+                if updated_user_profile is None:
+                    # Generate initial user profile
+                    prompt = self.generate_user_profile_prompt(user_info=user_info, last_n_items=chunk)
+                else:
+                    # Update existing user profile
+                    prompt = self.generate_user_profile_prompt(
+                        user_info=user_info,
+                        last_n_items=chunk,
+                        update=True,
+                        current_profile=updated_user_profile
+                    )
+
+                updated_user_profile, tokens_chunk = self.get_llm_response(prompt, mode="user_profile")
+                # updating token counters
                 self.total_tokens['prompt_tokens'] += tokens_chunk['prompt_tokens']
                 self.total_tokens['completion_tokens'] += tokens_chunk['completion_tokens']
 
-        return summary, tokens, last_n_items
+        self.users_df.loc[self.users_df['user_id'] == user_id, 'user_profile'] = updated_user_profile
+
+        return updated_user_profile
 
     # --------------------------------------------------------------
-
-    def update_summary_prompt(self, previous_summary, user_info, new_chunk):
+    def update_limit_tracker(self, tokens):
         """
-        Generate the prompt to update the summary with new item ratings
-        :param previous_summary: str
-        :param new_chunk: DataFrame
-        :return: str
+        updates the number of tokens and requested used
+        :param token:
+        :return:
         """
-        if self.prompt_update_summary == None:
-            self.prompt_update_summary = """Based on this comprehensive set of data, provide an in-depth summary of 
-            the user's movie preferences and characteristics. Include details on the types of movies the user enjoys 
-            or is not interested in, and highlight important factors that influence the user's preferences. The 
-            summary should be a coherent, stand-alone analysis that integrates all the information without referring 
-            to updates or previous summaries. Consider adding more details than previous summary given the new data. 
-            It should be so clear that by reading the summary we could predict The user's potential rating based on 
-            the summary."""
 
-        ratings_summary = '\n'.join(
-            f"Item: {row[self.item_feature]}\nRating: {row[self.rating]}" for _, row in new_chunk.iterrows()
-        )
+        self.total_tokens['prompt_tokens'] += tokens['prompt_tokens']
+        self.total_tokens['completion_tokens'] += tokens['completion_tokens']
+        self.temp_token_counter = tokens['prompt_tokens'] + tokens['completion_tokens']
+        self.RPD = + 1
 
-        prompt = f"""
-    Consider below information about the user:
-    User Info:
-    {user_info}
-    
-    Below is the Previous Summary information about user's characteristics based on their recent ratings:
-    {previous_summary}
-    
-    Now, we have New items Ratings as below:
-    {ratings_summary}
-    
-    {self.prompt_update_summary}
-    
-    The output should be a JSON file. The output should be a JSON file. Below is an example of expected output:
-    
-    {{"Summary": "sample summary"}}
-    """
-        return prompt
+        if self.RPD == 10000:
+            print("You have sent 10,000 requests ... you cannot send any more requests for today")
+
+        else:
+            # Check token limits
+            if self.temp_token_counter > 28000 and self.token_clock < 60:  # Using a safe margin
+                # reset counter
+                self.temp_token_counter = 0
+                self.token_clock = 0
+                print("Sleeping to respect the token limit...")
+                time.sleep(30)  # Sleep for 30 seconds before making new requests
 
     # --------------------------------------------------------------
-    def rate_new_items(self, user_id, analysis, last_n_items, test_set, test_chunk_size=10):
+    def rate_new_items(self, user_profile, last_n_items, test_set, test_chunk_size=10):
         """
-        Generate final output: simulated ratings
+        Generate final output: simulated ratings for the entire test set
         """
-        user_info = self.users_df[self.users_df[self.user_id] == user_id][self.user_feature].values[0]
-        test_items = test_set.merge(self.items_df, on=self.item_feature)
+        test_items = test_set.merge(self.items_df, on=self.item_id)
         recent_items = last_n_items
 
         # Breaking test_set into chunks
@@ -332,11 +395,35 @@ class Lusifer:
         aggregated_ratings = {}
 
         for chunk in test_item_chunks:
-            prompt = self.rate_new_items_prompt(user_info, analysis, recent_items, chunk)
+            prompt = self.rate_new_items_prompt(user_profile, recent_items, chunk)
             response, tokens = self.get_llm_response(prompt, mode="rating")
-            aggregated_ratings.update(response)
+
+            # Parse the JSON response
+            try:
+                llm_ratings = json.loads(response)
+            except json.JSONDecodeError:
+                print("Error decoding JSON response. Attempting to extract JSON from response text.")
+                # Attempt to extract JSON from the response
+                json_match = re.search(r'\{.*\}', response, re.DOTALL)
+                if json_match:
+                    try:
+                        llm_ratings = json.loads(json_match.group(0))
+                    except json.JSONDecodeError:
+                        print("Failed to parse JSON after extraction. Skipping this chunk.")
+                        continue
+                else:
+                    print("No JSON object found in response. Skipping this chunk.")
+                    continue
+
+            # Clean and parse the ratings using the provided functions
+            cleaned_ratings = self.parse_llm_ratings(llm_ratings)
+            aggregated_ratings.update(cleaned_ratings)
+
+            # Update token counters
             self.total_tokens['prompt_tokens'] += tokens['prompt_tokens']
             self.total_tokens['completion_tokens'] += tokens['completion_tokens']
+
+            self.update_limit_tracker(tokens)
 
         return aggregated_ratings
 
@@ -373,8 +460,8 @@ class Lusifer:
 
                 try:
                     output = json.loads(response.choices[0].message.content)
-                    if mode == "summary":
-                        return output["Summary"], tokens
+                    if mode == "user_profile":
+                        return output["user_profile"], tokens
                     elif mode == "rating":
                         return output, tokens
                     else:
@@ -414,8 +501,8 @@ class Lusifer:
         :param rating_test_df: dataframe
         :return:
         """
-        valid_item_ids = self.items_df[self.item_feature].unique()
-        self.ratings_df = self.ratings_df[self.ratings_df[self.item_feature].isin(valid_item_ids)]
+        valid_item_ids = self.items_df[self.item_id].unique()
+        self.ratings_df = self.ratings_df[self.ratings_df[self.item_id].isin(valid_item_ids)]
         rating_test_df = rating_test_df[rating_test_df['movie_id'].isin(valid_item_ids)]
         return rating_test_df
 
@@ -459,4 +546,104 @@ class Lusifer:
             if clean_item_id is not None and clean_rating is not None:
                 cleaned_ratings[clean_item_id] = clean_rating
         return cleaned_ratings
-# --------------------------------------------------------------
+
+    # --------------------------------------------------------------
+    # Generate simulated rating for a single user and item
+    def simulate_rating(self, user_id, recommended_items_list):
+        """
+        Generate simulated rating for a single user and a single recommended item based on user_profile
+        and record the new interaction in self.ratings_df
+        """
+        # Get user_profile
+        user_profile_series = self.users_df[self.users_df[self.user_id] == user_id]['user_profile']
+        if user_profile_series.empty:
+            print(f"User ID {user_id} not found in users_df")
+            return None
+        user_profile = user_profile_series.values[0]
+
+        # Get last N items rated by the user for context (e.g., last 10)
+        last_n_items = self.get_last_ratings(user_id, n=10)
+        if last_n_items.empty:
+            print(f"No recent ratings found for User ID {user_id}")
+            last_n_items = pd.DataFrame(columns=[self.item_feature, self.rating])
+
+        # Get item info for recommended_items_list
+        item_info = self.items_df[self.items_df[self.item_id].isin(recommended_items_list)]
+        missing_items = set(recommended_items_list) - set(item_info[self.item_id].tolist())
+
+        if missing_items:
+            print(f"Item IDs {missing_items} not found in items_df")
+            # Remove missing items from the list
+            recommended_items_list = [item for item in recommended_items_list if item not in missing_items]
+            if not recommended_items_list:
+                print("No valid items to rate after removing missing items.")
+                return None
+
+        # Prepare test_set as DataFrame with the recommended items
+        test_set = item_info
+
+        # Generate the prompt to rate the recommended items
+        prompt = self.rate_new_items_prompt(user_profile, last_n_items, test_set)
+
+        # Get LLM response
+        llm_response, tokens = self.get_llm_response(prompt, mode="rating")
+
+        # Parse the LLM output
+        cleaned_ratings = self.parse_llm_ratings(llm_response)
+
+        # Filter out ratings that are not in the recommended_items_list
+        simulated_ratings = {item_id: rating for item_id, rating in cleaned_ratings.items() if
+                             item_id in recommended_items_list}
+
+        if simulated_ratings:
+            # Record the new interactions in self.ratings_df
+            new_interactions = []
+            current_time = time.time()
+            for item_id, rating in simulated_ratings.items():
+                new_interaction = {
+                    self.user_id: user_id,
+                    self.item_id: item_id,
+                    self.rating: rating,
+                    self.timestamp: current_time,
+                }
+                new_interactions.append(new_interaction)
+            self.ratings_df = pd.concat([self.ratings_df, pd.DataFrame(new_interactions)], ignore_index=True)
+
+            # Optionally, save the updated ratings_df
+            self.save_data(self.ratings_df, 'ratings_with_simulated_interactions')
+        else:
+            print(f"No valid ratings generated for the recommended items.")
+            return None
+
+        return simulated_ratings
+
+    # --------------------------------------------------------------
+    # Update user profile based on new interactions
+    def update_user_profile(self, user_id, recent_items_to_consider=5):
+        """
+        Generates user's summary of behavior
+        :param user_id: int
+        :param recent_items_to_consider:
+        :param chunk_size: int
+        :return:
+        """
+        total_tokens = {
+            'prompt_tokens': 0,
+            'completion_tokens': 0,
+        }
+
+        user_info = self.users_df[self.users_df[self.user_id] == user_id][self.user_feature].values[0]
+        user_profile = self.users_df[self.users_df[self.user_id] == user_id]["user_profile"].values[0]
+
+        last_n_items = self.get_last_ratings(user_id, n=recent_items_to_consider)
+
+        prompt = self.generate_user_profile_prompt(user_info=user_info, last_n_items=last_n_items, update=True, current_profile=user_profile)
+        new_user_profile, tokens_chunk = self.get_llm_response(prompt, mode="user_profile")
+
+        # updating token counters
+        self.total_tokens['prompt_tokens'] += tokens_chunk['prompt_tokens']
+        self.total_tokens['completion_tokens'] += tokens_chunk['completion_tokens']
+
+        self.users_df.loc[self.users_df['user_id'] == user_id, 'user_profile'] = new_user_profile
+
+        return new_user_profile

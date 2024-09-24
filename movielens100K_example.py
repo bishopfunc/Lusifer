@@ -14,21 +14,23 @@ from Lusifer import Lusifer
 # Set your OpenAI API key
 KEY = "OpenAI API"
 # path to the folder containing movielens data
-Path = "sample path"
+Path = "D:/Canada/Danial/UoW/Dataset/MovieLens/100K/ml-100k"
 
 
 # --------------------------------------------------------------
 def load_data():
     # Paths for the processed files
-    processed_users_file = "./Data/users_with_summary_df.csv"
-    processed_ratings_file = "./Data/rating_test_df_test.csv"
+    processed_users_file = "./Samples/Data/users_with_summary_df.csv"
+    processed_ratings_file = "./Samples/Data/rating_test_df_test.csv"
 
     # loading users dataframe
     if os.path.exists(processed_users_file):
         # Load the processed files if they exist
         users_df = pd.read_csv(processed_users_file)
+        # users_df = pd.read_pickle(processed_users_file)
+
     else:
-        users_df = pd.read_pickle("./Data/user_dataset.pkl")
+        users_df = pd.read_pickle("./Samples/Data/user_dataset.pkl")
         users_df = users_df[["user_id", "user_info"]]
 
     # loading ratings dataframe
@@ -44,7 +46,7 @@ def load_data():
                             encoding='latin-1')
 
     # Load movies
-    movies_df = pd.read_pickle("./Data/movies_enriched_dataset.pkl")
+    movies_df = pd.read_pickle("./Samples/Data/movies_enriched_dataset.pkl")
     movies_df = movies_df[["movie_id", "movie_info"]]
 
     # Add new column to store simulated ratings if it doesn't exist
@@ -127,7 +129,7 @@ if __name__ == "__main__":
                       ratings_df=rating_df)
 
     # set API connection
-    lusifer.set_openai_connection(KEY, model="gpt-3.5-turbo-0125")
+    lusifer.set_openai_connection(KEY, model="gpt-4o-mini")
 
     # set column names
     lusifer.set_column_names(user_feature="user_info",
@@ -139,7 +141,7 @@ if __name__ == "__main__":
 
     # set LLM initial instruction
     instructions = """You are an AI assistant that receives users information and try to act like the user  by 
-    analysing user's characteristics inorder to provide ratings for the recommendations"""
+    analysing user's characteristics, profile and historical ratings inorder to provide new ratings for the recommended movies"""
 
     lusifer.set_llm_instruction(instructions)
 
@@ -150,11 +152,12 @@ if __name__ == "__main__":
     # lusifer.set_saving_path(self, path="")
 
     # Filtering out invalid movie_ids, make sure we have movie_info for every movie in the test set
-    rating_df, rating_test_df = lusifer.filter_ratings(rating_test_df)
+    rating_test_df = lusifer.filter_ratings(rating_test_df)
+    rating_df = lusifer.filter_ratings(rating_df)
 
 
-    # user_ids = rating_test_df['user_id'].unique()
-    user_ids = [1]
+    user_ids = rating_test_df['user_id'].unique()
+    # user_ids = [1]
 
     # Track token usage and evaluate results
     total_prompt_tokens = 0
@@ -174,9 +177,6 @@ if __name__ == "__main__":
             # generating summary for the user using Lusifer
             summary, tokens_analysis, last_N_movies = lusifer.generate_summary(user_id, recent_movies_to_consider=60)
             users_df.loc[users_df['user_id'] == user_id, 'summary'] = summary
-            total_prompt_tokens += tokens_analysis['prompt_tokens']
-            total_completion_tokens += tokens_analysis['completion_tokens']
-            temp_token_counter += tokens_analysis['prompt_tokens'] + tokens_analysis['completion_tokens']
 
             # Check token limits
             if temp_token_counter > 55000:  # Using a safe margin
@@ -206,7 +206,7 @@ if __name__ == "__main__":
             last_N_movies = lusifer.get_last_ratings(user_id, n=10)
 
             # generate rating
-            llm_ratings, tokens_ratings = lusifer.rate_new_items(user_id, summary, last_N_movies, missing_ratings)
+            llm_ratings, tokens_ratings = lusifer.rate_new_items(summary, last_N_movies, missing_ratings)
             total_prompt_tokens += tokens_ratings['prompt_tokens']
             total_completion_tokens += tokens_ratings['completion_tokens']
             temp_token_counter = tokens_ratings['prompt_tokens'] + tokens_ratings['completion_tokens']
