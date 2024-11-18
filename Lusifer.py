@@ -1,9 +1,11 @@
+
 import openai
 from openai import OpenAI
 import json
 import re
 import time
 import pandas as pd
+import logging
 
 
 class Lusifer:
@@ -44,7 +46,7 @@ class Lusifer:
         self.prompt_simulate_rating = None
 
         # saving path
-        self.saving_path = None
+        self.saving_path = ""
 
     # --------------------------------------------------------------
     def set_openai_connection(self, api_key, model):
@@ -94,7 +96,7 @@ class Lusifer:
         self.instructions = instructions
 
     # --------------------------------------------------------------
-    def set_prompts(self, prompt_user_profile=None, prompt_update_user_profile=None, prompt_simulate_rating=None):
+    def set_prompts(self, prompt_user_profile=None, prompt_update_user_profile=None, prompt_simulate_rating=None, instructions=None):
         """
         Set prompts for Lusifer
         :param prompt_user_profile: prompt to generate the first summary
@@ -110,8 +112,10 @@ class Lusifer:
     
     **Instructions**:
     - Identify genres, themes, directors, actors, and other movie attributes the user enjoys or dislikes.
+    - Describe the qualities or characteristics of movies that the user enjoys (based on high ratings) and those they dislike (based on low ratings), without mentioning specific movie titles or their ratings.
     - Highlight any patterns or preferences evident from the ratings.
     - The profile should be detailed enough to predict the user's potential ratings for unseen movies.
+    - Ensure the profile is comprehensive and presents a cohesive analysis of the user's preferences.
     - Avoid mentioning the process or using phrases like "the user seems to".
     """
         else:
@@ -125,11 +129,12 @@ class Lusifer:
     **Task**: Integrate the new ratings into the user's profile to refine and enhance the analysis.
     
     **Instructions**:
-    - Incorporate insights from the new ratings with the existing profile.
+    - Incorporate insights from the new ratings with the existing profile by mentioning shifts in tastes or new patterns revealed by the latest ratings.
     - Update any changes in preferences or new patterns that emerge.
-    - Ensure the profile remains comprehensive and cohesive.
-    - Do not reference previous summaries or mention that this is an update.
-            """
+    - Ensure the updated profile is comprehensive and presents a cohesive analysis of the user's preferences..
+    - Do not reference previous summaries or indicate that this profile has been updated.
+    - Describe the qualities or characteristics of movies that the user enjoys (based on high ratings) and those they dislike (based on low ratings), without mentioning specific movie titles or their ratings.
+     """
         else:
             self.prompt_update_user_profile = prompt_update_user_profile
 
@@ -140,10 +145,11 @@ class Lusifer:
 
     **Task**: Based on the user's profile and recent movie interactions, rate the following movies on behalf of the user.
     
-    **Instructions**:
-    - Carefully consider the user's preferences, dislikes, and behavioral patterns as outlined in the user profile.
-    - Analyze each movie's attributes (genre, director, actors, plot) and determine how well it aligns with the user's tastes.
-    - Assign a rating from 1 to 5 for each movie, where 1 is the lowest (strong dislike) and 5 is the highest (strong like).
+    **Instructions**: 
+    - Carefully consider the user's preferences, dislikes, and behavioral patterns as outlined in the user profile. 
+    - By analyze each movie's attributes (genre, director, actors, summary) and determine how well 
+    it aligns with the user's tastes, assign a rating from 1 to 5 for each movie, where 1 is the lowest (strong 
+    dislike) and 5 is the highest (strong like). 
     - Do not include any explanations or additional text; only provide the ratings in the specified format.
     
     **Movies to Rate**:
@@ -151,6 +157,19 @@ class Lusifer:
     """
         else:
             self.prompt_simulate_rating = prompt_simulate_rating
+
+        if instructions is None:
+            self.instructions =  """
+    You are an advanced language model assistant designed to perform specific tasks based on instructions.
+    
+    **General Guidelines**:
+    - Follow the prompt instructions precisely.
+    - Provide clear, concise, and accurate information.
+    - Ensure all outputs are properly formatted as per the instructions.
+    
+    """
+        else:
+            self.instructions = instructions
 
     # --------------------------------------------------------------
 
@@ -188,21 +207,20 @@ class Lusifer:
         :return:
         """
         if update:
-            prompt_user_profile = self.prompt_user_profile
+            prompt_user_profile = self.prompt_update_user_profile
             user_info = current_profile
         else:
-            prompt_user_profile = self.prompt_update_user_profile
+            prompt_user_profile = self.prompt_user_profile
 
 
         # getting rating summary and movie summaries: Below is the sample based on Movielens data
         ratings_summary = '\n'.join(
-            f"- **Movie**: {row[self.item_feature]}, **Rating**: {row[self.rating]}"
+            f"- **Movie**: {row[self.item_feature]} \n **Rating**: {row[self.rating]} \n"
             for _, row in last_n_items.iterrows()
         )
 
         # Generating prompt
-        prompt = f"""
-    You are provided with the following information about a user:
+        prompt = f"""You are provided with the following information about a user:
 
     **User Profile**: 
     {user_info}
@@ -226,14 +244,19 @@ class Lusifer:
         """
         output_instructions = """
         **Output Format**:
-        - Provide the user_profile in a JSON object under the key "user_profile".
-        - Ensure the JSON is properly formatted for parsing.
+        - Provide the user_profile in a JSON object under the key "user_profile", where the value is a cohesion and coherence structured text describing the user's profile.
+        - Ensure the JSON is properly formatted for parsing, with no other keys other than "user_profile".
         - Do not include any additional text outside the JSON object.
                 
-        ```json
         {
-          "user_profile": "Detailed analysis of the user's movie preferences."
+          "user_profile": "Detailed analysis of the user's movie preferences as an structured plain text"
         }
+        
+        **Example output structure**:
+        {
+          "user_profile": "User is interested in comedy and dramatic movies."
+        }
+        
         """
 
         return output_instructions
@@ -243,34 +266,26 @@ class Lusifer:
         instructions for the output format in simulating the ratings process
         :return:
         """
-        output_instructions = f"""
+        output_instructions = """
         
         **Output Requirements**:
-        - Provide the ratings in a JSON object.
-        - The JSON should have movie IDs as keys and ratings as integer values.
+        - Provide the ratings as JSON output where the keys are movie IDs and ratings are values. ratings should be integers scale 1 to 5.
+        - Ensure the JSON is properly formatted for parsing, with no other keys other than movie_ids.
+        - Do not include any additional text outside the JSON output.
         - The format must be strictly as follows:
 
-        ```json
-        {{
-          "movie_id1": rating1,
-          "movie_id2": rating2,
-          ...
-        }}
+        {
+          movie_id1: rating1,
+          movie_id2: rating2,
+        }
     
-        **Example of ACCEPTED output:**
+        **Example of ACCEPTED output. Let's say the movie_ids are 123 and 456, and respective ratings are 4 and 5:**
         
-        {{
-          123: 4,
-          456: 5
-        }}
+        {
+          "123": "4",
+          "456": "5"
+        }
         
-        **Important:**
-        
-        - Do not include any text outside the JSON object.
-        - Ensure that the JSON is properly formatted for parsing.
-        - Do not use quotes around numeric values.
-        - Do not include additional keys or nested structures.
-        - Avoid any commentary or explanation in your response. 
         """
 
         return output_instructions
@@ -297,8 +312,7 @@ class Lusifer:
             for _, row in test_set.iterrows()
         )
 
-        prompt = f"""
-        You are provided with the following information about a user:
+        prompt = f"""You are provided with the following information about a user:
 
         **User Profile**:
         {user_profile}
@@ -316,7 +330,7 @@ class Lusifer:
         return prompt
 
     # --------------------------------------------------------------
-    def generate_user_profile(self, user_id, recent_items_to_consider=40, chunk_size=5):
+    def generate_user_profile(self, user_id, recent_items_to_consider=40, chunk_size=10):
         """
         Generates user's summary of behavior
         :param user_id: int
@@ -349,8 +363,7 @@ class Lusifer:
 
                 updated_user_profile, tokens_chunk = self.get_llm_response(prompt, mode="user_profile")
                 # updating token counters
-                self.total_tokens['prompt_tokens'] += tokens_chunk['prompt_tokens']
-                self.total_tokens['completion_tokens'] += tokens_chunk['completion_tokens']
+                self.update_limit_tracker(tokens_chunk)
 
         self.users_df.loc[self.users_df['user_id'] == user_id, 'user_profile'] = updated_user_profile
 
@@ -363,23 +376,23 @@ class Lusifer:
         :param token:
         :return:
         """
-
+        # Update token counters
         self.total_tokens['prompt_tokens'] += tokens['prompt_tokens']
         self.total_tokens['completion_tokens'] += tokens['completion_tokens']
-        self.temp_token_counter = tokens['prompt_tokens'] + tokens['completion_tokens']
+
+        self.temp_token_counter += tokens['prompt_tokens']
+
+        if self.temp_token_counter > 180000:  # Using a safe margin
+            print("Sleeping to respect the token limit...")
+            # reset the token counter
+            self.temp_token_counter = 0
+            time.sleep(60)  # Sleep for a minute before making new requests
+
         self.RPD = + 1
 
         if self.RPD == 10000:
             print("You have sent 10,000 requests ... you cannot send any more requests for today")
 
-        else:
-            # Check token limits
-            if self.temp_token_counter > 28000 and self.token_clock < 60:  # Using a safe margin
-                # reset counter
-                self.temp_token_counter = 0
-                self.token_clock = 0
-                print("Sleeping to respect the token limit...")
-                time.sleep(30)  # Sleep for 30 seconds before making new requests
 
     # --------------------------------------------------------------
     def rate_new_items(self, user_profile, last_n_items, test_set, test_chunk_size=10):
@@ -398,30 +411,9 @@ class Lusifer:
             prompt = self.rate_new_items_prompt(user_profile, recent_items, chunk)
             response, tokens = self.get_llm_response(prompt, mode="rating")
 
-            # Parse the JSON response
-            try:
-                llm_ratings = json.loads(response)
-            except json.JSONDecodeError:
-                print("Error decoding JSON response. Attempting to extract JSON from response text.")
-                # Attempt to extract JSON from the response
-                json_match = re.search(r'\{.*\}', response, re.DOTALL)
-                if json_match:
-                    try:
-                        llm_ratings = json.loads(json_match.group(0))
-                    except json.JSONDecodeError:
-                        print("Failed to parse JSON after extraction. Skipping this chunk.")
-                        continue
-                else:
-                    print("No JSON object found in response. Skipping this chunk.")
-                    continue
-
             # Clean and parse the ratings using the provided functions
-            cleaned_ratings = self.parse_llm_ratings(llm_ratings)
+            cleaned_ratings = self.parse_llm_ratings(response)
             aggregated_ratings.update(cleaned_ratings)
-
-            # Update token counters
-            self.total_tokens['prompt_tokens'] += tokens['prompt_tokens']
-            self.total_tokens['completion_tokens'] += tokens['completion_tokens']
 
             self.update_limit_tracker(tokens)
 
@@ -435,18 +427,19 @@ class Lusifer:
 
         openai.api_key = self.api_key
         instructions = self.instructions
+
         client = OpenAI(api_key=self.api_key)
 
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
                     model=self.model,
-                    response_format={"type": "json_object"},
                     messages=[
                         {"role": "system", "content": instructions},
                         {"role": "user", "content": prompt}
                     ],
-                    max_tokens=500,
+                    response_format={"type": "json_object"},
+                    max_tokens=700,
                     n=1,
                     temperature=0.7
                 )
@@ -456,17 +449,38 @@ class Lusifer:
                     'completion_tokens': response.usage.completion_tokens,
                     'total_tokens': response.usage.total_tokens
                 }
-                # print(f"Tokens used: {tokens}")
+
 
                 try:
                     output = json.loads(response.choices[0].message.content)
+
                     if mode == "user_profile":
-                        return output["user_profile"], tokens
+                        if 'user_profile' not in output:
+                            print(f"'user_profile' is missing in response on attempt {attempt + 1}. Retrying...")
+                            continue  # Continue to next attempt
+                        else:
+                            return output["user_profile"], tokens
+
+
                     elif mode == "rating":
-                        return output, tokens
+                        # Check if all keys and values are integers or strings that can be converted to integers
+                        all_int = True
+                        for k, v in output.items():
+                            try:
+                                int(k)
+                                int(v)
+                            except ValueError:
+                                all_int = False
+                                break
+                        if all_int:
+                            return output, tokens
+                        # make sure key and values are integers if they are:
+                        else:
+                            print(f"Keys and values are not integers on attempt {attempt + 1}. Retrying...")
+                            continue  # Continue to next attempt
                     else:
                         print(f"Invalid mode: {mode}")
-                        return [], tokens
+                        return None, tokens
 
                 except json.JSONDecodeError:
                     print(f"Invalid JSON from LLM on attempt {attempt + 1}. Retrying...")
@@ -474,8 +488,11 @@ class Lusifer:
             except openai.APIConnectionError as e:
                 print("The server could not be reached")
                 print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+
             except openai.RateLimitError as e:
                 print("A 429 status code was received; we should back off a bit.")
+                backoff_time = (2 ** attempt)
+                time.sleep(backoff_time)
             except openai.APIStatusError as e:
                 print("Another non-200-range status code was received")
                 print(e.status_code)
@@ -505,6 +522,16 @@ class Lusifer:
         self.ratings_df = self.ratings_df[self.ratings_df[self.item_id].isin(valid_item_ids)]
         rating_test_df = rating_test_df[rating_test_df['movie_id'].isin(valid_item_ids)]
         return rating_test_df
+
+    # --------------------------------------------------------------
+    def filter_users(self):
+        """
+        Make sure we have information about all the items in the test set
+        :param rating_test_df: dataframe
+        :return:
+        """
+        self.users_df = self.users_df[self.users_df['user_id'].isin(self.ratings_df)]
+        return self.users_df
 
     # --------------------------------------------------------------
     def clean_key(self, key):

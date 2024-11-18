@@ -350,7 +350,7 @@ def get_llm_response(prompt, mode, max_retries=3):
 # --------------------------------------------------------------
 def load_data():
     # Paths for the processed files
-    processed_users_file = "../Samples/Data/users_with_summary_df.csv"
+    processed_users_file = "../Samples/Data/user_dataset.csv"
     processed_ratings_file = "../Samples/Data/rating_test_df_test.csv"
 
 
@@ -359,7 +359,7 @@ def load_data():
         # Load the processed files if they exist
         users_df = pd.read_csv(processed_users_file)
     else:
-        users_df = pd.read_pickle("../Samples/Data/user_dataset.pkl")
+        users_df = pd.read_pickle("../Samples/Data/100k/user_dataset.pkl")
         users_df = users_df[["user_id", "user_info"]]
 
     # loading ratings dataframe
@@ -375,7 +375,7 @@ def load_data():
                             encoding='latin-1')
 
     # Load movies
-    movies_df = pd.read_pickle("../Samples/Data/movies_enriched_dataset.pkl")
+    movies_df = pd.read_pickle("../Samples/Data/100k/movies_enriched_dataset.pkl")
     movies_df = movies_df[["movie_id", "movie_info"]]
 
     # Add new column to store simulated ratings if it doesn't exist

@@ -3,9 +3,10 @@ import os
 from surprise import Dataset, Reader
 from surprise import accuracy
 import pandas as pd
+from scipy.stats import pearsonr
 
 
-def test_recommender(algo, data_path, output_path, index, n_recent_entries, heading_name):
+def test_recommender(algo, data_path, output_path, index, n_recent_entries, heading_name, post_process):
     print(f"Running test with index {index} to produce {heading_name}")
 
     # Paths for base and test files
@@ -15,6 +16,8 @@ def test_recommender(algo, data_path, output_path, index, n_recent_entries, head
     # Load the train and test data using dataframes
     train_df = pd.read_csv(train_file, sep='\t', names=['userId', 'movieId', 'rating', 'timestamp'])
     test_df = pd.read_csv(test_file, sep='\t', names=['userId', 'movieId', 'rating', 'timestamp'])
+
+    #print(train_df['timestamp'].describe())
 
     # Reduce the data to the n most recent if it is a positive number, otherwise use the whole dataset
     if n_recent_entries > 0:
@@ -44,10 +47,18 @@ def test_recommender(algo, data_path, output_path, index, n_recent_entries, head
 
     # Calculate and print Root Mean Squared Error for the test set
     rmse = accuracy.rmse(predictions)
+    mae = accuracy.mae(predictions)
+    mse = accuracy.mse(predictions)
+
     print(f"RMSE: {rmse}")
+    print(f"MSE: {mse}")
+    print(f"MAE: {mae}")
+
+
+    processed_predictions = post_process(predictions)
 
     # Prepare a DataFrame for the predictions
-    predictions_df = pd.DataFrame(predictions, columns=['user_id', 'movie_id', 'r_ui', heading_name, 'details'])
+    predictions_df = pd.DataFrame(processed_predictions, columns=['user_id', 'movie_id', 'r_ui', heading_name, 'details'])
 
     # Remove unnecessary columns
     predictions_df = predictions_df.drop(columns=['r_ui', 'details'])
@@ -73,6 +84,42 @@ def test_recommender(algo, data_path, output_path, index, n_recent_entries, head
 
     # Merge the predictions with the existing output DataFrame using 'user_id' and 'movie_id'
     merged_df = pd.merge(output_df, predictions_df, on=['user_id', 'movie_id'], how='left')
+
+    # Calculate Pearson correlation coefficient and p-value
+    corr_coef, p_value = pearsonr(merged_df['rating'], merged_df[heading_name])
+
+    print(f"Pearson Correlation Coefficient: {corr_coef}")
+    print(f"P-value: {p_value}")
+
+    # **Insert your custom metric calculations here**
+
+    # Compute the absolute difference between actual and predicted ratings
+    difference = (merged_df['rating'] - merged_df[heading_name]).abs()
+
+    # Exact match
+    exact_matches = difference == 0
+    exact_match_count = exact_matches.sum()
+    exact_match_percentage = exact_match_count / len(merged_df) * 100
+
+    # Off by 1 level
+    off_by_1 = difference == 1
+    off_by_1_count = off_by_1.sum()
+    off_by_1_percentage = off_by_1_count / len(merged_df) * 100
+
+    # Off by more than 1 level
+    off_by_more_than_1 = difference > 1
+    off_by_more_than_1_count = off_by_more_than_1.sum()
+    off_by_more_than_1_percentage = off_by_more_than_1_count / len(merged_df) * 100
+
+    # Close match (Exact match + Off by 1 level)
+    close_match_count = exact_match_count + off_by_1_count
+    close_match_percentage = close_match_count / len(merged_df) * 100
+
+    # Print the results
+    print(f"Exact match count: {exact_match_count}, Percentage: {exact_match_percentage:.2f}%")
+    print(f"Off by 1 count: {off_by_1_count}, Percentage: {off_by_1_percentage:.2f}%")
+    print(f"Off by more than 1 count: {off_by_more_than_1_count}, Percentage: {off_by_more_than_1_percentage:.2f}%")
+    print(f"Close match count: {close_match_count}, Percentage: {close_match_percentage:.2f}%")
 
     # Save the updated DataFrame back to the CSV file
     merged_df.to_csv(existing_csv_file_path, index=False)
