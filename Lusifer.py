@@ -6,6 +6,7 @@ import re
 import time
 import pandas as pd
 import logging
+from local_llm.LocalLM import LocalLM
 
 
 class Lusifer:
@@ -47,6 +48,7 @@ class Lusifer:
 
         # saving path
         self.saving_path = ""
+        self.llm = LocalLM(model="gemma3:4b")
 
     # --------------------------------------------------------------
     def set_openai_connection(self, api_key, model):
@@ -112,7 +114,7 @@ class Lusifer:
     
     **Instructions**:
     - Identify genres, themes, directors, actors, and other movie attributes the user enjoys or dislikes.
-    - Describe the qualities or characteristics of movies that the user enjoys (based on high ratings) and those they dislike (based on low ratings), without mentioning specific movie titles or their ratings.
+    - Describe the qualities or characteristics of movies that the user enjoys (based on high ratings like 4 or 5) and those they dislike (based on low ratings, like 1 or 2) without mentioning movie titles or ratings.
     - Highlight any patterns or preferences evident from the ratings.
     - The profile should be detailed enough to predict the user's potential ratings for unseen movies.
     - Ensure the profile is comprehensive and presents a cohesive analysis of the user's preferences.
@@ -130,10 +132,10 @@ class Lusifer:
     
     **Instructions**:
     - Incorporate insights from the new ratings with the existing profile by mentioning shifts in tastes or new patterns revealed by the latest ratings.
-    - Update any changes in preferences or new patterns that emerge.
-    - Ensure the updated profile is comprehensive and presents a cohesive analysis of the user's preferences..
+    - Update any changes in user profiles or new patterns and preferences that emerge or rise to make the user-profile richer.
+    - Ensure the updated profile is comprehensive and presents a cohesive analysis of the user's preferences.
     - Do not reference previous summaries or indicate that this profile has been updated.
-    - Describe the qualities or characteristics of movies that the user enjoys (based on high ratings) and those they dislike (based on low ratings), without mentioning specific movie titles or their ratings.
+    - Describe the qualities or characteristics of movies that the user enjoys (based on high ratings like 4 or 5) and those they dislike (based on low ratings, like 1 or 2).
      """
         else:
             self.prompt_update_user_profile = prompt_update_user_profile
@@ -143,7 +145,7 @@ class Lusifer:
             self.prompt_simulate_rating = """
     You are an expert movie critic and data analyst.
 
-    **Task**: Based on the user's profile and recent movie interactions, rate the following movies on behalf of the user.
+    **Task**: Based on the user's profile and recent movie interactions, rate the following movies as YOU ARE the user.
     
     **Instructions**: 
     - Carefully consider the user's preferences, dislikes, and behavioral patterns as outlined in the user profile. 
@@ -230,63 +232,87 @@ class Lusifer:
         
     {prompt_user_profile}
     
-    {self.user_profile_output_prompt()}
+    {self.user_profile_output_prompt(update)}
     
     """
 
         return prompt
 
     # --------------------------------------------------------------
-    def user_profile_output_prompt(self):
+    def user_profile_output_prompt(self, update):
         """
         output instructions
         :return: prompt
         """
-        output_instructions = """
-        **Output Format**:
-        - Provide the user_profile in a JSON object under the key "user_profile", where the value is a cohesion and coherence structured text describing the user's profile.
-        - Ensure the JSON is properly formatted for parsing, with no other keys other than "user_profile".
-        - Do not include any additional text outside the JSON object.
-                
-        {
-          "user_profile": "Detailed analysis of the user's movie preferences as an structured plain text"
-        }
-        
-        **Example output structure**:
-        {
-          "user_profile": "User is interested in comedy and dramatic movies."
-        }
-        
-        """
+
+        if update:
+
+            output_instructions = """
+            **Output Format**:
+            - Provide the user_profile in a JSON object under the key "user_profile", where the value is a cohesion and coherence structured text describing the user's profile in two paragraphs.
+            - In the JSON object under the key "update", provide brief highlight of updates and changes in user_profile comparing to the previous profile (in one sentence).
+            - Ensure the JSON is properly formatted for parsing, with no other keys other than "user_profile".
+            - Do not include any additional text outside the JSON object.
+            
+            {
+              "user_profile": "Detailed analysis of the user's movie preferences as an structured plain text"
+              "update": "Short and brief changes in the user_profile comparing to the previous profile after new ratings"
+            }
+
+            **Example output structure**:
+            {
+              "user_profile": "User is interested in comedy and dramatic movies."
+              "update": "User is showing new interest to dramatic movies"
+            }
+
+            """
+
+        else:
+
+            output_instructions = """
+            **Output Format**:
+            - Provide the user_profile in a JSON object under the key "user_profile", where the value is a cohesion and coherence structured text describing the user's profile.
+            - Ensure the JSON is properly formatted for parsing, with no other keys other than "user_profile".
+            - Do not include any additional text outside the JSON object.
+                    
+            {
+              "user_profile": "Detailed analysis of the user's movie preferences as an structured plain text"
+            }
+            
+            **Example output structure**:
+            {
+              "user_profile": "User is interested in comedy and dramatic movies."
+            }
+            
+            """
 
         return output_instructions
 
-    def simulated_rating_output_prompt(self):
+    def simulated_rating_output_prompt(self, test_set):
         """
         instructions for the output format in simulating the ratings process
         :return:
         """
+        lines = [
+            f'"{row[self.item_id]}": "simulated_rating (int)"'
+            for _, row in test_set.iterrows()
+        ]
+        output_example = "{\n" + ",\n".join(lines) + "\n}"
+
+
         output_instructions = """
         
         **Output Requirements**:
-        - Provide the ratings as JSON output where the keys are movie IDs and ratings are values. ratings should be integers scale 1 to 5.
+        - Provide the ratings as JSON output where the keys are movie IDs and ratings are values. 
+        - ratings should be integers scale 1 to 5.
         - Ensure the JSON is properly formatted for parsing, with no other keys other than movie_ids.
         - Do not include any additional text outside the JSON output.
-        - The format must be strictly as follows:
-
-        {
-          movie_id1: rating1,
-          movie_id2: rating2,
-        }
-    
-        **Example of ACCEPTED output. Let's say the movie_ids are 123 and 456, and respective ratings are 4 and 5:**
         
-        {
-          "123": "4",
-          "456": "5"
-        }
-        
+        **Example of ACCEPTED output structure:** \n
+             
         """
+
+        output_instructions += output_example
 
         return output_instructions
 
@@ -324,7 +350,7 @@ class Lusifer:
 
         {items_summary}
         
-        {self.simulated_rating_output_prompt()}
+        {self.simulated_rating_output_prompt(test_set)}
         """
 
         return prompt
@@ -339,19 +365,25 @@ class Lusifer:
         :return:
         """
 
-        user_info = self.users_df[self.users_df[self.user_id] == user_id][self.user_feature].values[0]
+        # Retrieve user information
+        user_info = self.users_df[self.users_df['user_id'] == user_id][self.user_feature].values[0]
         last_n_items = self.get_last_ratings(user_id, n=recent_items_to_consider)
 
-        # Initialize the user profile
+        # Initialize the user profile and a dictionary to store intermediate profiles
         updated_user_profile = None
+        intermediate_profiles = {}
+        profile_changes = {}
 
         # Process ratings in chunks
-        for i in range(0, len(last_n_items), chunk_size):
+        for chunk_number, i in enumerate(range(0, len(last_n_items), chunk_size), start=1):
             chunk = last_n_items[i:i + chunk_size]
             if not chunk.empty:
                 if updated_user_profile is None:
                     # Generate initial user profile
                     prompt = self.generate_user_profile_prompt(user_info=user_info, last_n_items=chunk)
+                    # Get response from LLM and update the profile
+                    updated_user_profile, tokens_chunk = self.get_llm_response(prompt, mode="user_profile")
+                    update = "First User profile"
                 else:
                     # Update existing user profile
                     prompt = self.generate_user_profile_prompt(
@@ -361,11 +393,22 @@ class Lusifer:
                         current_profile=updated_user_profile
                     )
 
-                updated_user_profile, tokens_chunk = self.get_llm_response(prompt, mode="user_profile")
-                # updating token counters
+                    # Get response from LLM and update the profile
+                    updated_user_profile, update, tokens_chunk = self.get_llm_response(prompt, mode="user_profile", update=True)
+
+                # Update token counters
                 self.update_limit_tracker(tokens_chunk)
 
+                # Store the intermediate profile with the chunk number as the key
+                intermediate_profiles[f'chunk_{chunk_number}'] = updated_user_profile
+                profile_changes[f'chunk_{chunk_number}'] = update
+
+        # Update the final user profile in the DataFrame
         self.users_df.loc[self.users_df['user_id'] == user_id, 'user_profile'] = updated_user_profile
+
+        # Store the intermediate profiles in a new column for easy access and evaluation
+        self.users_df.loc[self.users_df['user_id'] == user_id, 'intermediate_user_profiles'] = [intermediate_profiles]
+        self.users_df.loc[self.users_df['user_id'] == user_id, 'profile_changes'] = [profile_changes]
 
         return updated_user_profile
 
@@ -382,11 +425,11 @@ class Lusifer:
 
         self.temp_token_counter += tokens['prompt_tokens']
 
-        if self.temp_token_counter > 180000:  # Using a safe margin
+        if self.temp_token_counter > 195000:  # Using a safe margin
             print("Sleeping to respect the token limit...")
             # reset the token counter
             self.temp_token_counter = 0
-            time.sleep(60)  # Sleep for a minute before making new requests
+            time.sleep(30)  # Sleep for a minute before making new requests
 
         self.RPD = + 1
 
@@ -395,10 +438,11 @@ class Lusifer:
 
 
     # --------------------------------------------------------------
-    def rate_new_items(self, user_profile, last_n_items, test_set, test_chunk_size=10):
+    def rate_new_items(self, user_profile, last_n_items, test_set, test_chunk_size=1):
         """
         Generate final output: simulated ratings for the entire test set
         """
+
         test_items = test_set.merge(self.items_df, on=self.item_id)
         recent_items = last_n_items
 
@@ -409,10 +453,12 @@ class Lusifer:
 
         for chunk in test_item_chunks:
             prompt = self.rate_new_items_prompt(user_profile, recent_items, chunk)
-            response, tokens = self.get_llm_response(prompt, mode="rating")
+            # response, tokens = self.get_llm_response(prompt, mode="rating")
+            llm_response, tokens = self.llm.get_llm_response(prompt, mode="rating")
 
-            # Clean and parse the ratings using the provided functions
-            cleaned_ratings = self.parse_llm_ratings(response)
+            # Parse the LLM output
+            cleaned_ratings = self.parse_llm_ratings(llm_response)
+
             aggregated_ratings.update(cleaned_ratings)
 
             self.update_limit_tracker(tokens)
@@ -420,7 +466,7 @@ class Lusifer:
         return aggregated_ratings
 
     # --------------------------------------------------------------
-    def get_llm_response(self, prompt, mode, max_retries=3):
+    def get_llm_response(self, prompt, mode, update=False, max_retries=3):
         """
         sending the prompt to the LLM and get back the response
         """
@@ -458,8 +504,17 @@ class Lusifer:
                         if 'user_profile' not in output:
                             print(f"'user_profile' is missing in response on attempt {attempt + 1}. Retrying...")
                             continue  # Continue to next attempt
+
                         else:
-                            return output["user_profile"], tokens
+                            if update:
+                                if 'update' not in output:
+                                    print(
+                                        f"'update' is missing in response on attempt {attempt + 1}. Retrying...")
+                                    continue  # Continue to next attempt
+                                else:
+                                    return output["user_profile"], output["update"], tokens
+                            else:
+                                return output["user_profile"], tokens
 
 
                     elif mode == "rating":
@@ -523,6 +578,20 @@ class Lusifer:
         rating_test_df = rating_test_df[rating_test_df['movie_id'].isin(valid_item_ids)]
         return rating_test_df
 
+    def filter_test_ratings(self, rating_test_df, test_case=10):
+        """
+        Make sure we have information about all the items in the test set
+        :param rating_test_df: dataframe
+        :return:
+        """
+        # 3. Group by user_id and take only the first 'test_case' rows for each user
+        rating_test_df = (
+            rating_test_df
+            .groupby('user_id', group_keys=False)
+            .apply(lambda group: group.head(test_case))
+        )
+        return rating_test_df
+
     # --------------------------------------------------------------
     def filter_users(self):
         """
@@ -567,12 +636,15 @@ class Lusifer:
         :return:
         """
         cleaned_ratings = {}
-        for movie_id, rating in llm_ratings.items():
-            clean_item_id = self.clean_key(movie_id)
-            clean_rating = self.clean_value(rating)
-            if clean_item_id is not None and clean_rating is not None:
-                cleaned_ratings[clean_item_id] = clean_rating
-        return cleaned_ratings
+        if len(llm_ratings) == 0:
+            return None
+        else:
+            for movie_id, rating in llm_ratings.items():
+                clean_item_id = self.clean_key(movie_id)
+                clean_rating = self.clean_value(rating)
+                if clean_item_id is not None and clean_rating is not None:
+                    cleaned_ratings[clean_item_id] = clean_rating
+            return cleaned_ratings
 
     # --------------------------------------------------------------
     # Generate simulated rating for a single user and item
@@ -613,7 +685,9 @@ class Lusifer:
         prompt = self.rate_new_items_prompt(user_profile, last_n_items, test_set)
 
         # Get LLM response
-        llm_response, tokens = self.get_llm_response(prompt, mode="rating")
+        # llm_response, tokens = self.get_llm_response(prompt, mode="rating")
+        llm = LocalLM(model="gemma3:12b")
+        llm_response, tokens = llm.get_llm_response(prompt, mode="rating")
 
         # Parse the LLM output
         cleaned_ratings = self.parse_llm_ratings(llm_response)

@@ -351,7 +351,7 @@ def get_llm_response(prompt, mode, max_retries=3):
 def load_data():
     # Paths for the processed files
     processed_users_file = "../Samples/Data/user_dataset.csv"
-    processed_ratings_file = "../Samples/Data/rating_test_df_test.csv"
+    processed_ratings_file = "../Samples/Data/rating_test_df_100k.csv"
 
 
     # loading users dataframe

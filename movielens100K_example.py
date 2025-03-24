@@ -10,22 +10,27 @@ import re
 import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, cohen_kappa_score
 from scipy.stats import spearmanr
+from dotenv import load_dotenv
+load_dotenv()
 
 # import Lusifer
 from Lusifer import Lusifer
 
 # Use your actual API key securely
 KEY = os.getenv('OPENAI_API_KEY')
-
+data = "100k"
 # path to the folder containing movielens data
-Path = "D:/Canada/Danial/UoW/Dataset/MovieLens/100K/ml-100k"
+Path = f"D:/Canada/Danial/UoW/Dataset/MovieLens/{data}/ml-{data}"
 
 
 # --------------------------------------------------------------
 def load_data():
+
     # Paths for the processed files
-    processed_users_file = "./Samples/Data/100k/user_dataset.pkl"
-    processed_ratings_file = "./Samples/Data/rating_test_df_test.csv"
+    processed_users_file = f"./Samples/Data/{data}/users_with_summary_df.csv"
+    # processed_ratings_file = f"./Samples/Data/{data}/rating_test_df_{data}.csv"
+    processed_ratings_file = f"./outputs/rating_test_df_{data}_local.csv"
+
 
     # loading users dataframe
     if os.path.exists(processed_users_file):
@@ -34,7 +39,7 @@ def load_data():
         # users_df = pd.read_pickle(processed_users_file)
 
     else:
-        users_df = pd.read_pickle("Samples/Data/100k/user_dataset.pkl")
+        users_df = pd.read_pickle(f"Samples/Data/{data}/user_dataset.pkl")
         users_df = users_df[["user_id", "user_info"]]
 
     # loading ratings dataframe
@@ -42,15 +47,20 @@ def load_data():
         rating_test_df = pd.read_csv(processed_ratings_file)
 
     else:
-        rating_test_df = pd.read_csv(f'{Path}/u1.test', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'],
-                                     encoding='latin-1')
+        # rating_test_df = pd.read_csv(f'{Path}/u1.test', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'],
+        #                              encoding='latin-1')
+        rating_test_df = pd.read_csv(f'Baseline/Librecommender_baseline/testset_df_{data}.csv')
 
     # loading ratings: Train set
-    rating_df = pd.read_csv(f'{Path}/u1.base', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'],
+    rating_df = pd.read_csv(f'Samples/Data/{data}/u1.base', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'],
                             encoding='latin-1')
 
+    rating_df.sort_values(by=['user_id', 'timestamp'], inplace=True)
+    # Group by userId and select the n most recent entries for each user
+    rating_df = rating_df.groupby('user_id').tail(40)
+
     # Load movies
-    movies_df = pd.read_pickle("Samples/Data/100k/movies_enriched_dataset.pkl")
+    movies_df = pd.read_pickle(f"Samples/Data/{data}/movies_enriched_dataset.pkl")
     movies_df = movies_df[["movie_id", "movie_info"]]
 
     # Add new column to store simulated ratings if it doesn't exist
@@ -192,9 +202,10 @@ if __name__ == "__main__":
     # lusifer.set_saving_path(self, path="")
 
     # Filtering out invalid movie_ids, make sure we have movie_info for every movie in the test set
-    rating_test_df = lusifer.filter_ratings(rating_test_df)
-    rating_df = lusifer.filter_ratings(rating_df)
+    #rating_test_df = lusifer.filter_ratings(rating_test_df)
+    #rating_df = lusifer.filter_ratings(rating_df)
 
+    #rating_test_df = lusifer.filter_test_ratings(rating_test_df, test_case=10)
 
     user_ids = rating_test_df['user_id'].unique()
     # user_ids = [1]
