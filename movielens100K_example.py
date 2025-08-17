@@ -195,6 +195,7 @@ if __name__ == "__main__":
     # Argument parser for local LLM usage
     parser = argparse.ArgumentParser()
     parser.add_argument("--use_local_llm", action="store_true")
+    parser.add_argument("--model", type=str, default="gpt-4o")
     args = parser.parse_args()
 
     # loading movielens dataset
@@ -211,7 +212,7 @@ if __name__ == "__main__":
     # set API connection
     # model = "gpt-4o-mini-2024-07-18"
     # model = "gpt-4o-mini"
-    model = "gpt-4o"
+    model = args.model
     lusifer.set_openai_connection(KEY, model=model)
 
     # set column names
