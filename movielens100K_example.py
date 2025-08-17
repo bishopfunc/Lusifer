@@ -194,7 +194,7 @@ def evaluate_result(dataframe):
 if __name__ == "__main__":
     # Argument parser for local LLM usage
     parser = argparse.ArgumentParser()
-    parser.add_argument("use_local_llm", type=bool, default=False)
+    parser.add_argument("--use_local_llm", action="store_true")
     args = parser.parse_args()
 
     # loading movielens dataset
