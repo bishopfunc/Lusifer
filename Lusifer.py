@@ -1,11 +1,11 @@
-
-import openai
-from openai import OpenAI
 import json
 import re
 import time
+
+import openai
 import pandas as pd
-import logging
+from openai import OpenAI
+
 from local_llm.LocalLM import LocalLM
 
 
@@ -15,11 +15,12 @@ class Lusifer:
     Lusifer can generate user summary behavior, updates the summary, and generate simulated ratings
     """
 
-    def __init__(self, users_df, items_df, ratings_df):
+    def __init__(self, users_df, items_df, ratings_df, use_local_llm=False):
         # loading data as pandas dataframes
         self.users_df = users_df
         self.items_df = items_df
         self.ratings_df = ratings_df
+        self.use_local_llm = use_local_llm
 
         self.api_key = None  # will be set by user
         self.model = None  # will be set by user
@@ -34,8 +35,8 @@ class Lusifer:
         # to trace the number of tokens and estimate the cost if needed
         self.temp_token_counter = 0
         self.total_tokens = {
-            'prompt_tokens': 0,
-            'completion_tokens': 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
         }
         self.RPD = 0
         self.token_clock = 0
@@ -48,7 +49,7 @@ class Lusifer:
 
         # saving path
         self.saving_path = ""
-        # self.llm = LocalLM(model="gemma3:4b")
+        self.llm = LocalLM(model="gemma3:4b") if use_local_llm else None
 
     # --------------------------------------------------------------
     def set_openai_connection(self, api_key, model):
@@ -62,11 +63,15 @@ class Lusifer:
         self.model = model
 
     # --------------------------------------------------------------
-    def set_column_names(self, user_feature, item_feature,
-                         user_id="user_id",
-                         item_id="item_id",
-                         timestamp="timestamp",
-                         rating="rating"):
+    def set_column_names(
+        self,
+        user_feature,
+        item_feature,
+        user_id="user_id",
+        item_id="item_id",
+        timestamp="timestamp",
+        rating="rating",
+    ):
         """
         Setting necessary column names
         :param user_feature: user feature column
@@ -98,7 +103,13 @@ class Lusifer:
         self.instructions = instructions
 
     # --------------------------------------------------------------
-    def set_prompts(self, prompt_user_profile=None, prompt_update_user_profile=None, prompt_simulate_rating=None, instructions=None):
+    def set_prompts(
+        self,
+        prompt_user_profile=None,
+        prompt_update_user_profile=None,
+        prompt_simulate_rating=None,
+        instructions=None,
+    ):
         """
         Set prompts for Lusifer
         :param prompt_user_profile: prompt to generate the first summary
@@ -123,7 +134,6 @@ class Lusifer:
         else:
             self.prompt_user_profile = prompt_user_profile
 
-
         if prompt_update_user_profile is None:
             self.prompt_update_user_profile = """
     You are updating an existing user profile based on new rating data.
@@ -139,7 +149,6 @@ class Lusifer:
      """
         else:
             self.prompt_update_user_profile = prompt_update_user_profile
-
 
         if prompt_simulate_rating is None:
             self.prompt_simulate_rating = """
@@ -161,7 +170,7 @@ class Lusifer:
             self.prompt_simulate_rating = prompt_simulate_rating
 
         if instructions is None:
-            self.instructions =  """
+            self.instructions = """
     You are an advanced language model assistant designed to perform specific tasks based on instructions.
     
     **General Guidelines**:
@@ -191,15 +200,20 @@ class Lusifer:
         :param n: int or None (default is 20)
         :return: DataFrame
         """
-        user_ratings = self.ratings_df[self.ratings_df[self.user_id] == user_id].sort_values(by=self.timestamp,
-                                                                                             ascending=False)
+        user_ratings = self.ratings_df[
+            self.ratings_df[self.user_id] == user_id
+        ].sort_values(by=self.timestamp, ascending=False)
         if n is not None:
             user_ratings = user_ratings.head(n)
-        user_items = self.items_df[self.items_df[self.item_id].isin(user_ratings[self.item_id])]
+        user_items = self.items_df[
+            self.items_df[self.item_id].isin(user_ratings[self.item_id])
+        ]
         return user_ratings.merge(user_items, on=self.item_id)
 
     # --------------------------------------------------------------
-    def generate_user_profile_prompt(self, user_info, last_n_items, update=False, current_profile=None):
+    def generate_user_profile_prompt(
+        self, user_info, last_n_items, update=False, current_profile=None
+    ):
         """
         Generating the initial prompt to capture user's characteristics
         :param user_info: user information
@@ -214,9 +228,8 @@ class Lusifer:
         else:
             prompt_user_profile = self.prompt_user_profile
 
-
         # getting rating summary and movie summaries: Below is the sample based on Movielens data
-        ratings_summary = '\n'.join(
+        ratings_summary = "\n".join(
             f"- **Movie**: {row[self.item_feature]} \n **Rating**: {row[self.rating]} \n"
             for _, row in last_n_items.iterrows()
         )
@@ -246,7 +259,6 @@ class Lusifer:
         """
 
         if update:
-
             output_instructions = """
             **Output Format**:
             - Provide the user_profile in a JSON object under the key "user_profile", where the value is a cohesion and coherence structured text describing the user's profile in two paragraphs.
@@ -268,7 +280,6 @@ class Lusifer:
             """
 
         else:
-
             output_instructions = """
             **Output Format**:
             - Provide the user_profile in a JSON object under the key "user_profile", where the value is a cohesion and coherence structured text describing the user's profile.
@@ -299,7 +310,6 @@ class Lusifer:
         ]
         output_example = "{\n" + ",\n".join(lines) + "\n}"
 
-
         output_instructions = """
         
         **Output Requirements**:
@@ -327,13 +337,13 @@ class Lusifer:
         """
 
         # Recent items summaries
-        recent_items_summary = '\n'.join(
+        recent_items_summary = "\n".join(
             f"- **Movie**: {row[self.item_feature]}, **Rating**: {row[self.rating]}"
             for _, row in last_n_movies.iterrows()
         )
 
         # Test items summaries
-        items_summary = '\n'.join(
+        items_summary = "\n".join(
             f"- **Movie ID**: {row[self.item_id]}\n  **Description**: {row[self.item_feature]}"
             for _, row in test_set.iterrows()
         )
@@ -356,7 +366,9 @@ class Lusifer:
         return prompt
 
     # --------------------------------------------------------------
-    def generate_user_profile(self, user_id, recent_items_to_consider=40, chunk_size=10):
+    def generate_user_profile(
+        self, user_id, recent_items_to_consider=40, chunk_size=10
+    ):
         """
         Generates user's summary of behavior
         :param user_id: int
@@ -366,7 +378,9 @@ class Lusifer:
         """
 
         # Retrieve user information
-        user_info = self.users_df[self.users_df['user_id'] == user_id][self.user_feature].values[0]
+        user_info = self.users_df[self.users_df["user_id"] == user_id][
+            self.user_feature
+        ].values[0]
         last_n_items = self.get_last_ratings(user_id, n=recent_items_to_consider)
 
         # Initialize the user profile and a dictionary to store intermediate profiles
@@ -375,14 +389,20 @@ class Lusifer:
         profile_changes = {}
 
         # Process ratings in chunks
-        for chunk_number, i in enumerate(range(0, len(last_n_items), chunk_size), start=1):
-            chunk = last_n_items[i:i + chunk_size]
+        for chunk_number, i in enumerate(
+            range(0, len(last_n_items), chunk_size), start=1
+        ):
+            chunk = last_n_items[i : i + chunk_size]
             if not chunk.empty:
                 if updated_user_profile is None:
                     # Generate initial user profile
-                    prompt = self.generate_user_profile_prompt(user_info=user_info, last_n_items=chunk)
+                    prompt = self.generate_user_profile_prompt(
+                        user_info=user_info, last_n_items=chunk
+                    )
                     # Get response from LLM and update the profile
-                    updated_user_profile, tokens_chunk = self.get_llm_response(prompt, mode="user_profile")
+                    updated_user_profile, tokens_chunk = self.get_llm_response(
+                        prompt, mode="user_profile"
+                    )
                     update = "First User profile"
                 else:
                     # Update existing user profile
@@ -390,25 +410,33 @@ class Lusifer:
                         user_info=user_info,
                         last_n_items=chunk,
                         update=True,
-                        current_profile=updated_user_profile
+                        current_profile=updated_user_profile,
                     )
 
                     # Get response from LLM and update the profile
-                    updated_user_profile, update, tokens_chunk = self.get_llm_response(prompt, mode="user_profile", update=True)
+                    updated_user_profile, update, tokens_chunk = self.get_llm_response(
+                        prompt, mode="user_profile", update=True
+                    )
 
                 # Update token counters
                 self.update_limit_tracker(tokens_chunk)
 
                 # Store the intermediate profile with the chunk number as the key
-                intermediate_profiles[f'chunk_{chunk_number}'] = updated_user_profile
-                profile_changes[f'chunk_{chunk_number}'] = update
+                intermediate_profiles[f"chunk_{chunk_number}"] = updated_user_profile
+                profile_changes[f"chunk_{chunk_number}"] = update
 
         # Update the final user profile in the DataFrame
-        self.users_df.loc[self.users_df['user_id'] == user_id, 'user_profile'] = updated_user_profile
+        self.users_df.loc[self.users_df["user_id"] == user_id, "user_profile"] = (
+            updated_user_profile
+        )
 
         # Store the intermediate profiles in a new column for easy access and evaluation
-        self.users_df.loc[self.users_df['user_id'] == user_id, 'intermediate_user_profiles'] = [intermediate_profiles]
-        self.users_df.loc[self.users_df['user_id'] == user_id, 'profile_changes'] = [profile_changes]
+        self.users_df.loc[
+            self.users_df["user_id"] == user_id, "intermediate_user_profiles"
+        ] = [intermediate_profiles]
+        self.users_df.loc[self.users_df["user_id"] == user_id, "profile_changes"] = [
+            profile_changes
+        ]
 
         return updated_user_profile
 
@@ -420,10 +448,10 @@ class Lusifer:
         :return:
         """
         # Update token counters
-        self.total_tokens['prompt_tokens'] += tokens['prompt_tokens']
-        self.total_tokens['completion_tokens'] += tokens['completion_tokens']
+        self.total_tokens["prompt_tokens"] += tokens["prompt_tokens"]
+        self.total_tokens["completion_tokens"] += tokens["completion_tokens"]
 
-        self.temp_token_counter += tokens['prompt_tokens']
+        self.temp_token_counter += tokens["prompt_tokens"]
 
         if self.temp_token_counter > 195000:  # Using a safe margin
             print("Sleeping to respect the token limit...")
@@ -431,11 +459,12 @@ class Lusifer:
             self.temp_token_counter = 0
             time.sleep(30)  # Sleep for a minute before making new requests
 
-        self.RPD = + 1
+        self.RPD = +1
 
         if self.RPD == 10000:
-            print("You have sent 10,000 requests ... you cannot send any more requests for today")
-
+            print(
+                "You have sent 10,000 requests ... you cannot send any more requests for today"
+            )
 
     # --------------------------------------------------------------
     def rate_new_items(self, user_profile, last_n_items, test_set, test_chunk_size=1):
@@ -447,14 +476,19 @@ class Lusifer:
         recent_items = last_n_items
 
         # Breaking test_set into chunks
-        test_item_chunks = [test_items[i:i + test_chunk_size] for i in range(0, len(test_items), test_chunk_size)]
+        test_item_chunks = [
+            test_items[i : i + test_chunk_size]
+            for i in range(0, len(test_items), test_chunk_size)
+        ]
 
         aggregated_ratings = {}
 
         for chunk in test_item_chunks:
             prompt = self.rate_new_items_prompt(user_profile, recent_items, chunk)
-            llm_response, tokens = self.get_llm_response(prompt, mode="rating")
-            # llm_response, tokens = self.llm.get_llm_response(prompt, mode="rating")
+            if self.use_local_llm:
+                llm_response, tokens = self.llm.get_llm_response(prompt, mode="rating")
+            else:
+                llm_response, tokens = self.get_llm_response(prompt, mode="rating")
 
             # Parse the LLM output
             cleaned_ratings = self.parse_llm_ratings(llm_response)
@@ -482,40 +516,45 @@ class Lusifer:
                     model=self.model,
                     messages=[
                         {"role": "system", "content": instructions},
-                        {"role": "user", "content": prompt}
+                        {"role": "user", "content": prompt},
                     ],
                     response_format={"type": "json_object"},
                     max_tokens=700,
                     n=1,
-                    temperature=0.7
+                    temperature=0.7,
                 )
 
                 tokens = {
-                    'prompt_tokens': response.usage.prompt_tokens,
-                    'completion_tokens': response.usage.completion_tokens,
-                    'total_tokens': response.usage.total_tokens
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens,
                 }
-
 
                 try:
                     output = json.loads(response.choices[0].message.content)
 
                     if mode == "user_profile":
-                        if 'user_profile' not in output:
-                            print(f"'user_profile' is missing in response on attempt {attempt + 1}. Retrying...")
+                        if "user_profile" not in output:
+                            print(
+                                f"'user_profile' is missing in response on attempt {attempt + 1}. Retrying..."
+                            )
                             continue  # Continue to next attempt
 
                         else:
                             if update:
-                                if 'update' not in output:
+                                if "update" not in output:
                                     print(
-                                        f"'update' is missing in response on attempt {attempt + 1}. Retrying...")
+                                        f"'update' is missing in response on attempt {attempt + 1}. Retrying..."
+                                    )
                                     continue  # Continue to next attempt
                                 else:
-                                    return output["user_profile"], output["update"], tokens
+                                    return (
+                                        output["user_profile"],
+                                        output["update"],
+                                        tokens,
+                                    )
                             else:
                                 return output["user_profile"], tokens
-
 
                     elif mode == "rating":
                         # Check if all keys and values are integers or strings that can be converted to integers
@@ -531,22 +570,28 @@ class Lusifer:
                             return output, tokens
                         # make sure key and values are integers if they are:
                         else:
-                            print(f"Keys and values are not integers on attempt {attempt + 1}. Retrying...")
+                            print(
+                                f"Keys and values are not integers on attempt {attempt + 1}. Retrying..."
+                            )
                             continue  # Continue to next attempt
                     else:
                         print(f"Invalid mode: {mode}")
                         return None, tokens
 
                 except json.JSONDecodeError:
-                    print(f"Invalid JSON from LLM on attempt {attempt + 1}. Retrying...")
+                    print(
+                        f"Invalid JSON from LLM on attempt {attempt + 1}. Retrying..."
+                    )
 
             except openai.APIConnectionError as e:
                 print("The server could not be reached")
-                print(e.__cause__)  # an underlying Exception, likely raised within httpx.
+                print(
+                    e.__cause__
+                )  # an underlying Exception, likely raised within httpx.
 
-            except openai.RateLimitError as e:
+            except openai.RateLimitError:
                 print("A 429 status code was received; we should back off a bit.")
-                backoff_time = (2 ** attempt)
+                backoff_time = 2**attempt
                 time.sleep(backoff_time)
             except openai.APIStatusError as e:
                 print("Another non-200-range status code was received")
@@ -563,8 +608,8 @@ class Lusifer:
          :return:
         """
         # Save the updated dataframes to files
-        df.to_pickle(f'{self.saving_path}{file_name}.pkl')
-        df.to_csv(f'{self.saving_path}{file_name}.csv')
+        df.to_pickle(f"{self.saving_path}{file_name}.pkl")
+        df.to_csv(f"{self.saving_path}{file_name}.csv")
 
     # --------------------------------------------------------------
     def filter_ratings(self, rating_test_df):
@@ -574,8 +619,10 @@ class Lusifer:
         :return:
         """
         valid_item_ids = self.items_df[self.item_id].unique()
-        self.ratings_df = self.ratings_df[self.ratings_df[self.item_id].isin(valid_item_ids)]
-        rating_test_df = rating_test_df[rating_test_df['movie_id'].isin(valid_item_ids)]
+        self.ratings_df = self.ratings_df[
+            self.ratings_df[self.item_id].isin(valid_item_ids)
+        ]
+        rating_test_df = rating_test_df[rating_test_df["movie_id"].isin(valid_item_ids)]
         return rating_test_df
 
     def filter_test_ratings(self, rating_test_df, test_case=10):
@@ -585,10 +632,8 @@ class Lusifer:
         :return:
         """
         # 3. Group by user_id and take only the first 'test_case' rows for each user
-        rating_test_df = (
-            rating_test_df
-            .groupby('user_id', group_keys=False)
-            .apply(lambda group: group.head(test_case))
+        rating_test_df = rating_test_df.groupby("user_id", group_keys=False).apply(
+            lambda group: group.head(test_case)
         )
         return rating_test_df
 
@@ -599,7 +644,7 @@ class Lusifer:
         :param rating_test_df: dataframe
         :return:
         """
-        self.users_df = self.users_df[self.users_df['user_id'].isin(self.ratings_df)]
+        self.users_df = self.users_df[self.users_df["user_id"].isin(self.ratings_df)]
         return self.users_df
 
     # --------------------------------------------------------------
@@ -610,7 +655,7 @@ class Lusifer:
         :return:
         """
         # Use regex to extract numeric part of the key
-        match = re.search(r'\d+', key)
+        match = re.search(r"\d+", key)
         if match:
             return int(match.group(0))
         return None
@@ -654,7 +699,9 @@ class Lusifer:
         and record the new interaction in self.ratings_df
         """
         # Get user_profile
-        user_profile_series = self.users_df[self.users_df[self.user_id] == user_id]['user_profile']
+        user_profile_series = self.users_df[self.users_df[self.user_id] == user_id][
+            "user_profile"
+        ]
         if user_profile_series.empty:
             print(f"User ID {user_id} not found in users_df")
             return None
@@ -667,13 +714,19 @@ class Lusifer:
             last_n_items = pd.DataFrame(columns=[self.item_feature, self.rating])
 
         # Get item info for recommended_items_list
-        item_info = self.items_df[self.items_df[self.item_id].isin(recommended_items_list)]
-        missing_items = set(recommended_items_list) - set(item_info[self.item_id].tolist())
+        item_info = self.items_df[
+            self.items_df[self.item_id].isin(recommended_items_list)
+        ]
+        missing_items = set(recommended_items_list) - set(
+            item_info[self.item_id].tolist()
+        )
 
         if missing_items:
             print(f"Item IDs {missing_items} not found in items_df")
             # Remove missing items from the list
-            recommended_items_list = [item for item in recommended_items_list if item not in missing_items]
+            recommended_items_list = [
+                item for item in recommended_items_list if item not in missing_items
+            ]
             if not recommended_items_list:
                 print("No valid items to rate after removing missing items.")
                 return None
@@ -693,8 +746,11 @@ class Lusifer:
         cleaned_ratings = self.parse_llm_ratings(llm_response)
 
         # Filter out ratings that are not in the recommended_items_list
-        simulated_ratings = {item_id: rating for item_id, rating in cleaned_ratings.items() if
-                             item_id in recommended_items_list}
+        simulated_ratings = {
+            item_id: rating
+            for item_id, rating in cleaned_ratings.items()
+            if item_id in recommended_items_list
+        }
 
         if simulated_ratings:
             # Record the new interactions in self.ratings_df
@@ -708,12 +764,14 @@ class Lusifer:
                     self.timestamp: current_time,
                 }
                 new_interactions.append(new_interaction)
-            self.ratings_df = pd.concat([self.ratings_df, pd.DataFrame(new_interactions)], ignore_index=True)
+            self.ratings_df = pd.concat(
+                [self.ratings_df, pd.DataFrame(new_interactions)], ignore_index=True
+            )
 
             # Optionally, save the updated ratings_df
-            self.save_data(self.ratings_df, 'ratings_with_simulated_interactions')
+            self.save_data(self.ratings_df, "ratings_with_simulated_interactions")
         else:
-            print(f"No valid ratings generated for the recommended items.")
+            print("No valid ratings generated for the recommended items.")
             return None
 
         return simulated_ratings
@@ -729,22 +787,35 @@ class Lusifer:
         :return:
         """
         total_tokens = {
-            'prompt_tokens': 0,
-            'completion_tokens': 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
         }
 
-        user_info = self.users_df[self.users_df[self.user_id] == user_id][self.user_feature].values[0]
-        user_profile = self.users_df[self.users_df[self.user_id] == user_id]["user_profile"].values[0]
+        user_info = self.users_df[self.users_df[self.user_id] == user_id][
+            self.user_feature
+        ].values[0]
+        user_profile = self.users_df[self.users_df[self.user_id] == user_id][
+            "user_profile"
+        ].values[0]
 
         last_n_items = self.get_last_ratings(user_id, n=recent_items_to_consider)
 
-        prompt = self.generate_user_profile_prompt(user_info=user_info, last_n_items=last_n_items, update=True, current_profile=user_profile)
-        new_user_profile, tokens_chunk = self.get_llm_response(prompt, mode="user_profile")
+        prompt = self.generate_user_profile_prompt(
+            user_info=user_info,
+            last_n_items=last_n_items,
+            update=True,
+            current_profile=user_profile,
+        )
+        new_user_profile, tokens_chunk = self.get_llm_response(
+            prompt, mode="user_profile"
+        )
 
         # updating token counters
-        self.total_tokens['prompt_tokens'] += tokens_chunk['prompt_tokens']
-        self.total_tokens['completion_tokens'] += tokens_chunk['completion_tokens']
+        self.total_tokens["prompt_tokens"] += tokens_chunk["prompt_tokens"]
+        self.total_tokens["completion_tokens"] += tokens_chunk["completion_tokens"]
 
-        self.users_df.loc[self.users_df['user_id'] == user_id, 'user_profile'] = new_user_profile
+        self.users_df.loc[self.users_df["user_id"] == user_id, "user_profile"] = (
+            new_user_profile
+        )
 
         return new_user_profile

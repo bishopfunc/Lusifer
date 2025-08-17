@@ -17,6 +17,7 @@ from sklearn.metrics import (
 from tqdm import tqdm
 
 load_dotenv()
+import argparse
 
 # import Lusifer
 from Lusifer import Lusifer
@@ -191,11 +192,16 @@ def evaluate_result(dataframe):
 
 
 if __name__ == "__main__":
+    # Argument parser for local LLM usage
+    parser = argparse.ArgumentParser()
+    parser.add_argument("use_local_llm", type=bool, default=False)
+    args = parser.parse_args()
+
     # loading movielens dataset
     movies_df, users_df, rating_df, rating_test_df = load_data()
 
     # create a Lusifer object
-    lusifer = Lusifer(users_df=users_df, items_df=movies_df, ratings_df=rating_df)
+    lusifer = Lusifer(users_df=users_df, items_df=movies_df, ratings_df=rating_df, 
 
     # set API connection
     # model = "gpt-4o-mini-2024-07-18"
