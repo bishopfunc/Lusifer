@@ -201,7 +201,12 @@ if __name__ == "__main__":
     movies_df, users_df, rating_df, rating_test_df = load_data()
 
     # create a Lusifer object
-    lusifer = Lusifer(users_df=users_df, items_df=movies_df, ratings_df=rating_df, 
+    lusifer = Lusifer(
+        users_df=users_df,
+        items_df=movies_df,
+        ratings_df=rating_df,
+        use_local_llm=args.use_local_llm,
+    )
 
     # set API connection
     # model = "gpt-4o-mini-2024-07-18"
